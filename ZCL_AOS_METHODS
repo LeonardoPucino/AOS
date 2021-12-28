@@ -1,0 +1,1344 @@
+class ZCL_AOS_METHODS definition
+  public
+  final
+  create public .
+
+public section.
+
+  types:
+    lr_bukrs TYPE RANGE OF bukrs .
+  types:
+    lr_blart TYPE RANGE OF blart .
+  types:
+    lr_bldat TYPE RANGE OF bldat .
+
+  methods GET_DATA
+    importing
+      value(S_BUKRS) type LR_BUKRS
+      value(S_BLART) type LR_BLART
+      value(S_BLDAT) type LR_BLDAT
+    exporting
+      value(ET_ZAOS_DATA) type ZAOS_DATA_T .
+  methods SAVE_DATA_INTO_DB_TABLE
+    importing
+      !IT_ZAOS_DATA type ZAOS_DATA_T
+    exporting
+      !EV_SUBRC type SY-SUBRC .
+  methods FILL_METADATA
+    importing
+      !IS_ZAOS_DATA type ZAOS_DATA
+    exporting
+      !EV_SUBRC type SY-SUBRC .
+  methods GET_ATTACHMENT
+    importing
+      !IS_ZAOS_DATA type ZAOS_DATA
+    exporting
+      !EV_SUBRC type SY-SUBRC .
+  methods CALCULATE_HASH_FOR_RAW
+    importing
+      !IV_DATA type XSTRING
+    exporting
+      !EV_SHA256 type STRING .
+  methods CALCULATE_HASH_FOR_CHAR
+    importing
+      !IV_DATA type STRING
+    exporting
+      !EV_SHA256 type STRING .
+  methods PARSE_XML
+    importing
+      !I_XML_STRING type STRING .
+  methods PRINT_NODE
+    changing
+      !I_PNODE type ref to IF_IXML_NODE .
+  methods CONVERT_XML_TO_TABLE
+    importing
+      !I_XML_STRING type STRING
+    exporting
+      !E_XML_DATA type EDOC_TABLE_FROM_XML .
+  methods UPDATE_EXISTING_DATA
+    exporting
+      !E_RETURN type SAP_BOOL .
+  methods GET_SDI_ID_AND_HASH
+    importing
+      value(IV_TARGET) type ZAOS_DATA-TARGET optional
+    changing
+      value(IS_DATA) type ZAOS_DATA optional .
+  methods CHECK_FILE_EXISTENCE
+    changing
+      value(C_DATA) type ZAOS_DATA optional .
+  methods PASSWORD_ENCRYPT_DECRYPT
+    importing
+      value(IV_ENCRYPT) type SAP_BOOL optional
+      value(IV_DECRYPT) type SAP_BOOL optional
+      value(IV_PASSWORD_IN) type ZIXCE_PASSWORD
+    exporting
+      value(IV_PASSWORD_OUT) type ZIXCE_PASSWORD .
+protected section.
+private section.
+ENDCLASS.
+
+
+
+CLASS ZCL_AOS_METHODS IMPLEMENTATION.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->CALCULATE_HASH_FOR_CHAR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_DATA                        TYPE        STRING
+* | [<---] EV_SHA256                      TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD calculate_hash_for_char.
+
+    DATA: ef_hashstring	   TYPE string,
+          ef_hashxstring   TYPE xstring,
+          ef_hashb64string TYPE string.
+
+    TRY.
+        cl_abap_message_digest=>calculate_hash_for_char(
+          EXPORTING
+            if_algorithm = 'SHA256'
+            if_data      = iv_data
+          IMPORTING
+            ef_hashstring     = ev_sha256
+            ef_hashxstring    = ef_hashxstring
+            ef_hashb64string  = ef_hashb64string
+        ).
+      CATCH cx_root.
+
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->CALCULATE_HASH_FOR_RAW
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_DATA                        TYPE        XSTRING
+* | [<---] EV_SHA256                      TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD calculate_hash_for_raw.
+
+    DATA: ef_hashstring    TYPE string,
+          ef_hashxstring   TYPE xstring,
+          ef_hashb64string TYPE string.
+
+    TRY.
+        cl_abap_message_digest=>calculate_hash_for_raw(
+          EXPORTING
+            if_algorithm      = 'SHA256'
+            if_data           = iv_data
+          IMPORTING
+            ef_hashstring     = ev_sha256
+            ef_hashxstring    = ef_hashxstring
+            ef_hashb64string  = ef_hashb64string
+
+        ).
+      CATCH cx_root.
+
+    ENDTRY.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->CHECK_FILE_EXISTENCE
+* +-------------------------------------------------------------------------------------------------+
+* | [<-->] C_DATA                         TYPE        ZAOS_DATA(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD check_file_existence.
+
+    DATA: lv_xstring    TYPE xstring,
+          lv_toa_length TYPE i,
+          lt_data       TYPE TABLE OF tbl1024,
+          lv_object_id  TYPE saeobjid.
+
+    CLEAR: lv_xstring,
+           lv_toa_length,
+           lt_data,
+           lv_object_id.
+
+    IF c_data-edoc_guid IS INITIAL AND c_data-filename IS INITIAL.
+      c_data-no_file = 'X'.
+      EXIT.
+    ELSE.
+      CLEAR: c_data-no_file.
+    ENDIF.
+
+    IF c_data-target = 'C' AND c_data-edoc_guid IS INITIAL.
+
+      OPEN DATASET c_data-filename FOR INPUT IN BINARY MODE.
+      IF sy-subrc EQ 0.
+        READ DATASET c_data-filename INTO lv_xstring.
+      ELSE.
+        c_data-no_file = 'X'.
+        EXIT.
+      ENDIF.
+      CLOSE DATASET c_data-filename.
+      IF lv_xstring IS INITIAL.
+        c_data-no_file = 'X'.
+        EXIT.
+      ENDIF.
+
+    ELSEIF c_data-target = 'C' AND c_data-edoc_guid IS NOT INITIAL.
+
+      SELECT SINGLE file_raw
+        FROM edocumentfile
+        INTO @DATA(lv_file_raw)
+        WHERE edoc_guid = @c_data-edoc_guid
+          AND file_type = 'SIGNEDDOC'.
+      IF sy-subrc NE 0 OR lv_file_raw IS INITIAL.
+        c_data-no_file = 'X'.
+        EXIT.
+      ENDIF.
+
+    ENDIF.
+
+    IF c_data-target = 'V' AND c_data-edoc_guid IS INITIAL.
+
+      SELECT SINGLE *
+        FROM zaos_att_toa
+        INTO @DATA(ls_att_toa)
+        WHERE doctype = @c_data-zarchiving_doctype
+          AND blart   = @c_data-blart
+          AND counter = '1'.
+      IF sy-subrc = 0.
+        IF ls_att_toa-awkey IS INITIAL.
+          CONCATENATE c_data-bukrs c_data-belnr c_data-gjahr INTO lv_object_id.
+        ELSE.
+          lv_object_id = c_data-awkey.
+        ENDIF.
+        SELECT SINGLE *
+          FROM toa01
+          INTO @DATA(ls_toa01)
+          WHERE sap_object = @ls_att_toa-sap_object
+            AND object_id  = @lv_object_id
+            AND archiv_id  = @ls_att_toa-archiv_id
+            AND ar_object  = @ls_att_toa-ar_object
+            AND reserve    = @ls_att_toa-reserve.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'SCMS_AO_TABLE_GET'
+            EXPORTING
+              arc_id       = ls_toa01-archiv_id
+              doc_id       = ls_toa01-arc_doc_id
+            IMPORTING
+              length       = lv_toa_length
+            TABLES
+              data         = lt_data
+            EXCEPTIONS
+              error_http   = 1
+              error_archiv = 2
+              error_kernel = 3
+              error_config = 4
+              OTHERS       = 5.
+          IF sy-subrc NE 0 OR lt_data IS INITIAL.
+            c_data-no_file = 'X'.
+            EXIT.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+    ELSEIF c_data-target = 'V' AND c_data-edoc_guid IS NOT INITIAL.
+
+      SELECT SINGLE file_raw
+        FROM edocumentfile
+        INTO @lv_file_raw
+        WHERE edoc_guid = @c_data-edoc_guid
+          AND file_type = 'SIGNEDDOC'.
+      IF sy-subrc NE 0 OR lv_file_raw IS INITIAL.
+        c_data-no_file = 'X'.
+        EXIT.
+      ENDIF.
+
+    ENDIF.
+
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->CONVERT_XML_TO_TABLE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] I_XML_STRING                   TYPE        STRING
+* | [<---] E_XML_DATA                     TYPE        EDOC_TABLE_FROM_XML
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD convert_xml_to_table.
+
+    DATA: lv_xstring  TYPE xstring,
+          lt_xml_data TYPE TABLE OF smum_xmltb,
+          lt_return   TYPE TABLE OF bapiret2.
+
+    CLEAR: lv_xstring,
+           lt_xml_data,
+           lt_return.
+
+    CALL FUNCTION 'SCMS_STRING_TO_XSTRING'
+      EXPORTING
+        text   = i_xml_string
+      IMPORTING
+        buffer = lv_xstring
+      EXCEPTIONS
+        failed = 1
+        OTHERS = 2.
+
+    CALL FUNCTION 'SMUM_XML_PARSE'
+      EXPORTING
+        xml_input = lv_xstring
+      TABLES
+        xml_table = lt_xml_data
+        return    = lt_return.
+
+    IF lt_xml_data IS NOT INITIAL.
+      e_xml_data = lt_xml_data.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->FILL_METADATA
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_ZAOS_DATA                   TYPE        ZAOS_DATA
+* | [<---] EV_SUBRC                       TYPE        SY-SUBRC
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD fill_metadata.
+
+    DATA: ls_zaos_metadata TYPE zaos_metadata,
+          lv_belnr         TYPE string,
+          lv_bldat         TYPE string.
+
+    CLEAR: ls_zaos_metadata,
+           ev_subrc,
+           lv_belnr,
+           lv_bldat.
+
+    CHECK is_zaos_data IS NOT INITIAL.
+
+    ev_subrc = 0.
+
+*    SELECT SINGLE *
+*      FROM bseg
+*      INTO @DATA(ls_bseg)
+*      WHERE belnr = @is_zaos_data-belnr
+*        AND bukrs = @is_zaos_data-bukrs
+*        AND gjahr = @is_zaos_data-gjahr
+*        AND vbeln = @is_zaos_data-vbeln.
+
+    lv_belnr = is_zaos_data-belnr.
+    SHIFT lv_belnr LEFT DELETING LEADING '0'.
+
+    CONCATENATE is_zaos_data-bldat+6(2) is_zaos_data-bldat+4(2) is_zaos_data-bldat(4)
+      INTO lv_bldat SEPARATED BY '.'.
+
+    ls_zaos_metadata-bukrs                = is_zaos_data-bukrs.
+    ls_zaos_metadata-numero_fattura       = is_zaos_data-belnr.
+    ls_zaos_metadata-gjahr                = is_zaos_data-gjahr.
+    ls_zaos_metadata-data_fattura         = is_zaos_data-bldat.
+    ls_zaos_metadata-sezionale_iva        = lv_belnr(2).
+    ls_zaos_metadata-anno_iva             = is_zaos_data-gjahr.
+    ls_zaos_metadata-numero_protocollo    = is_zaos_data-xblnr.
+    "ls_zaos_metadata-DATA_PROTOCOLLO      =
+    SELECT SINGLE ltext
+      FROM t003t
+      INTO @DATA(lv_ltext)
+      WHERE spras = 'E'
+        AND blart = @is_zaos_data-blart.
+    IF sy-subrc = 0.
+      CONCATENATE lv_ltext lv_belnr 'dated' lv_bldat INTO ls_zaos_metadata-oggetto SEPARATED BY space.
+    ELSE.
+      CONCATENATE 'Invoice' lv_belnr 'dated' lv_bldat INTO ls_zaos_metadata-oggetto SEPARATED BY space.
+    ENDIF.
+
+    IF is_zaos_data-target = 'C'.
+
+      SELECT SINGLE kna1~name1, kna1~name2, kna1~stcd2, kna1~stcd4, kna1~stceg, adrc~name1 AS adrcname
+        FROM kna1
+        INNER JOIN adrc
+        ON kna1~adrnr = adrc~addrnumber
+        INTO @DATA(ls_data_kna1)
+        "WHERE kunnr = @is_zaos_data-kunrg.
+        WHERE kunnr = @is_zaos_data-kunnr.
+      IF sy-subrc = 0.
+
+        ls_zaos_metadata-destinatario_nome    = ls_data_kna1-name1.
+        ls_zaos_metadata-destinatario_cognome = ls_data_kna1-name2.
+        ls_zaos_metadata-destinatario_codfisc = ls_data_kna1-stcd2.
+        ls_zaos_metadata-destinatario_ragsoc  = ls_data_kna1-adrcname.
+        ls_zaos_metadata-destinatario_piva    = ls_data_kna1-stceg.
+        ls_zaos_metadata-destinatario_ipa     = ls_data_kna1-stcd4.
+        "ls_zaos_metadata-DESTINATARIO_CODUFF  =
+
+      ELSE.
+        ev_subrc = 4.
+      ENDIF.
+
+    ELSEIF  is_zaos_data-target = 'V'.
+
+      SELECT SINGLE *
+        FROM lfa1
+        INTO @DATA(ls_data_lfa1)
+        WHERE lifnr = @is_zaos_data-lifnr.
+      IF sy-subrc = 0.
+
+        ls_zaos_metadata-mittente_nome        = ls_data_lfa1-name1.
+        ls_zaos_metadata-mittente_cognome     = ls_data_lfa1-name2.
+        ls_zaos_metadata-mittente_codfisc     = ls_data_lfa1-stcd2.
+        ls_zaos_metadata-mittente_ragsoc      = ls_data_lfa1-mcod1.
+        ls_zaos_metadata-mittente_piva        = ls_data_lfa1-stceg.
+        ls_zaos_metadata-mittente_ipa         = ls_data_lfa1-stcd4.
+        "ls_zaos_metadata-MITTENTE_CODUFF      =
+
+      ELSE.
+        ev_subrc = 4.
+      ENDIF.
+
+    ENDIF.
+
+
+    INSERT zaos_metadata FROM ls_zaos_metadata.
+    IF sy-subrc = 4.
+      MODIFY zaos_metadata FROM ls_zaos_metadata.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->GET_ATTACHMENT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_ZAOS_DATA                   TYPE        ZAOS_DATA
+* | [<---] EV_SUBRC                       TYPE        SY-SUBRC
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_attachment.
+
+*    DATA: lr_object       TYPE RANGE OF saeanwdid,
+*          ls_object       LIKE LINE OF lr_object,
+*          lr_object_id    TYPE RANGE OF saeobjid,
+*          ls_object_id    LIKE LINE OF lr_object_id,
+*          lv_archiv_id    TYPE saearchivi,
+*          lr_ar_object    TYPE RANGE OF saeardoid,
+*          ls_ar_object    LIKE LINE OF lr_ar_object,
+*          ls_zaos_all_gos TYPE zaos_all_gos.
+*
+*    CLEAR: lr_object,
+*           ls_object,
+*           lr_object_id,
+*           ls_object_id,
+*           lv_archiv_id,
+*           lr_ar_object,
+*           ls_ar_object,
+*           ls_zaos_all_gos.
+*
+*    CLEAR: ls_object.
+*    ls_object-option = 'EQ'.
+*    ls_object-sign    = 'I'.
+*    ls_object-low     = 'BUS2081'.
+*    APPEND ls_object TO lr_object.
+*
+*    CLEAR: ls_ar_object.
+*    ls_ar_object-option = 'EQ'.
+*    ls_ar_object-sign    = 'I'.
+*    ls_ar_object-low     = 'ZPDF'.
+*    APPEND ls_ar_object TO lr_ar_object.
+*
+*    CLEAR: ls_ar_object.
+*    ls_ar_object-option = 'EQ'.
+*    ls_ar_object-sign    = 'I'.
+*    ls_ar_object-low     = 'ZFIINVOICE'.
+*    APPEND ls_ar_object TO lr_ar_object.
+*
+*    CLEAR: ls_ar_object.
+*    ls_ar_object-option = 'EQ'.
+*    ls_ar_object-sign    = 'I'.
+*    ls_ar_object-low     = 'ZMMINVOICE'.
+*    APPEND ls_ar_object TO lr_ar_object.
+*
+*    CLEAR: ls_object_id.
+*    ls_object_id-option = 'EQ'.
+*    ls_object_id-sign    = 'I'.
+*    CONCATENATE  is_zaos_data-bukrs is_zaos_data-belnr is_zaos_data-gjahr INTO ls_object_id-low.
+*    APPEND ls_object_id TO lr_object_id.
+*
+*    CLEAR: ls_object_id.
+*    ls_object_id-option = 'EQ'.
+*    ls_object_id-sign    = 'I'.
+*    CONCATENATE  is_zaos_data-vbeln is_zaos_data-gjahr INTO ls_object_id-low.
+*    APPEND ls_object_id TO lr_object_id.
+*
+*    lv_archiv_id = 'Z1'.
+*
+**    CASE is_zaos_data-zarchiving_doctype.
+**      WHEN 'FE_ATTIVA'.
+**
+**      WHEN 'FE_PASSIVA'.
+**
+**      WHEN 'IT_ATTIVA'.
+**
+**      WHEN 'IT_PASSIVA'.
+**
+**      WHEN 'EX_ATTIVA'.
+**
+**      WHEN 'EX_PASSIVA'.
+**
+**    ENDCASE.
+*
+*    SELECT *
+*      FROM toa01
+*      INTO TABLE @DATA(lt_toa01)
+*      WHERE sap_object IN @lr_object
+*        AND object_id  IN @lr_object_id
+*        AND archiv_id  = @lv_archiv_id
+*        AND ar_object  IN @lr_ar_object.
+*    IF lt_toa01 IS NOT INITIAL.
+*      LOOP AT lt_toa01 ASSIGNING FIELD-SYMBOL(<fs_toa01>).
+*        IF <fs_toa01> IS ASSIGNED.
+*          MOVE-CORRESPONDING is_zaos_data TO ls_zaos_all_gos.
+*          MOVE-CORRESPONDING <fs_toa01>   TO ls_zaos_all_gos.
+*          INSERT zaos_all_gos FROM ls_zaos_all_gos.
+*        ENDIF.
+*      ENDLOOP.
+*    ENDIF.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->GET_DATA
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] S_BUKRS                        TYPE        LR_BUKRS
+* | [--->] S_BLART                        TYPE        LR_BLART
+* | [--->] S_BLDAT                        TYPE        LR_BLDAT
+* | [<---] ET_ZAOS_DATA                   TYPE        ZAOS_DATA_T
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_data.
+
+    TYPES: BEGIN OF ty_data.
+        INCLUDE TYPE zaos_data.
+    TYPES tcode         TYPE bkpf-tcode.
+    TYPES edocument     TYPE sap_bool.
+    TYPES sd_source_key TYPE edoc_source_key.
+    TYPES fi_source_key TYPE edoc_source_key.
+    TYPES: END OF ty_data.
+
+    DATA: lt_data         TYPE TABLE OF ty_data,
+          ls_zaos_data    TYPE zaos_data,
+          ls_data_hash    TYPE zaos_data,
+          lv_subrc        TYPE sy-subrc,
+          lv_belnr        TYPE string,
+          lv_numkr        TYPE numkr,
+          lv_fi_edoc_guid TYPE edoc_guid,
+          lv_id           TYPE sap_bool.
+
+    CLEAR: lt_data,
+           ls_zaos_data,
+           lv_subrc,
+           lv_belnr,
+           lv_numkr,
+           lv_id.
+
+    SELECT bkpf~bukrs,
+           bkpf~belnr,
+           bkpf~gjahr,
+           bkpf~blart,
+           bkpf~usnam,
+           bkpf~bldat,
+           bkpf~budat,
+           bkpf~monat,
+           bkpf~awkey,
+           bkpf~xblnr,
+           bkpf~tcode,
+           vbrk~vbeln,
+           vbrk~fkart,
+           vbrk~vkorg,
+           vbrk~vtweg,
+           vbrk~kunrg,
+           vbrk~fkdat
+      FROM bkpf
+      LEFT OUTER JOIN vbrk
+      ON vbrk~vbeln = bkpf~xblnr
+      INTO CORRESPONDING FIELDS OF TABLE @lt_data
+      WHERE bkpf~bukrs IN @s_bukrs
+        AND bkpf~blart IN @s_blart
+        AND bkpf~bldat IN @s_bldat.
+
+    SELECT *
+      FROM zaos_data
+      INTO TABLE @DATA(lt_zaos_data)
+      FOR ALL ENTRIES IN @lt_data
+      WHERE bukrs = @lt_data-bukrs
+        AND belnr = @lt_data-belnr
+        AND gjahr = @lt_data-gjahr.
+    IF sy-subrc = 0.
+      LOOP AT lt_zaos_data ASSIGNING FIELD-SYMBOL(<fs_zaos_data>).
+        IF <fs_zaos_data> IS ASSIGNED.
+          DELETE lt_data WHERE bukrs = <fs_zaos_data>-bukrs
+                           AND belnr = <fs_zaos_data>-belnr
+                           AND gjahr = <fs_zaos_data>-gjahr.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    CHECK lt_data IS NOT INITIAL.
+
+    LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<fs_data>).
+      IF <fs_data> IS ASSIGNED.
+
+        lv_belnr = <fs_data>-belnr.
+        SHIFT lv_belnr LEFT DELETING LEADING '0'.
+        lv_numkr = lv_belnr(2).
+        IF <fs_data>-blart = 'CX'.
+          CLEAR lv_numkr.
+          lv_numkr = '00'.
+        ENDIF.
+
+        SELECT SINGLE *
+          FROM zaos_arch_class
+          INTO @DATA(ls_arch_class)
+          WHERE numkr = @lv_numkr
+            AND blart = @<fs_data>-blart.
+        IF sy-subrc <> 0.
+          CONTINUE.
+        ELSE.
+          MOVE-CORRESPONDING ls_arch_class TO <fs_data>.
+
+          SELECT SINGLE
+            zaos_doctype~zaos_archd_description,
+            zaos_ixce_c_def~class_definition
+            FROM zaos_doctype
+            INNER JOIN zaos_ixce_class
+            ON zaos_doctype~zarchiving_doctype = zaos_ixce_class~zarchiving_doctype
+            INNER JOIN zaos_ixce_c_def
+            ON zaos_ixce_class~identificativo_classe = zaos_ixce_c_def~identificativo_classe
+            INTO ( @<fs_data>-zaos_archd_description, @<fs_data>-class_definition )
+            WHERE zaos_doctype~zarchiving_doctype = @<fs_data>-zarchiving_doctype.
+
+          IF <fs_data>-target = 'C'.  "SD_INVOICE
+
+            "Cliente
+            IF <fs_data>-vbeln IS NOT INITIAL.
+              SELECT SINGLE kunnr
+                FROM vbpa
+                INTO <fs_data>-kunnr
+                WHERE vbeln = <fs_data>-vbeln
+                  AND parvw = 'AG'.
+            ELSE.
+              SELECT SINGLE kunnr
+                FROM bseg
+                INTO <fs_data>-kunnr
+                WHERE bukrs = <fs_data>-bukrs
+                  AND belnr = <fs_data>-belnr
+                  AND gjahr = <fs_data>-gjahr
+                  AND koart = 'D'.
+            ENDIF.
+
+            IF <fs_data>-edocument IS NOT INITIAL.
+
+              <fs_data>-sd_source_key = <fs_data>-vbeln.
+              SELECT SINGLE edocument~source_key, edocument~source_type, edocument~edoc_guid
+                FROM edocument
+                INTO @DATA(ls_edocumentfile_sd)
+                WHERE source_key = @<fs_data>-sd_source_key.
+              IF sy-subrc = 0.
+                <fs_data>-edoc_source_type = ls_edocumentfile_sd-source_type.
+                <fs_data>-edoc_source_key  = ls_edocumentfile_sd-source_key.
+                <fs_data>-edoc_guid        = ls_edocumentfile_sd-edoc_guid.
+                lv_id                      = 'X'.
+                CLEAR: ls_data_hash.
+                MOVE-CORRESPONDING <fs_data> TO ls_data_hash.
+                CALL METHOD me->get_sdi_id_and_hash
+                  EXPORTING
+                    iv_target = <fs_data>-target
+                  CHANGING
+                    is_data   = ls_data_hash.
+                MOVE-CORRESPONDING ls_data_hash TO <fs_data>.
+              ELSE.
+                CLEAR: <fs_data>-sd_source_key.
+                CONCATENATE <fs_data>-bukrs <fs_data>-belnr <fs_data>-gjahr INTO <fs_data>-fi_source_key.
+                SELECT SINGLE edocument~source_key, edocument~source_type, edocument~edoc_guid
+                  FROM edocument
+                  INTO @ls_edocumentfile_sd
+                  WHERE source_key = @<fs_data>-fi_source_key.
+                IF sy-subrc = 0.
+                  <fs_data>-edoc_source_type = ls_edocumentfile_sd-source_type.
+                  <fs_data>-edoc_source_key  = ls_edocumentfile_sd-source_key.
+                  <fs_data>-edoc_guid        = ls_edocumentfile_sd-edoc_guid.
+                  lv_id                      = 'X'.
+                  CLEAR: ls_data_hash.
+                  MOVE-CORRESPONDING <fs_data> TO ls_data_hash.
+                  CALL METHOD me->get_sdi_id_and_hash
+                    EXPORTING
+                      iv_target = <fs_data>-target
+                    CHANGING
+                      is_data   = ls_data_hash.
+                  MOVE-CORRESPONDING ls_data_hash TO <fs_data>.
+                ENDIF.
+              ENDIF.
+
+            ENDIF.
+
+          ELSEIF <fs_data>-target = 'V'.  "FI_INVOICE
+
+            "Fornitore
+            SELECT SINGLE lifnr
+              FROM bseg
+              INTO <fs_data>-lifnr
+              WHERE bukrs = <fs_data>-bukrs
+                AND belnr = <fs_data>-belnr
+                AND gjahr = <fs_data>-gjahr
+                AND koart = 'K'.
+            IF sy-subrc NE 0.
+              SELECT SINGLE lifnr
+                FROM /opt/vim_1head
+                INTO <fs_data>-lifnr
+                WHERE bukrs = <fs_data>-bukrs
+                  AND belnr = <fs_data>-belnr
+                  AND gjahr = <fs_data>-gjahr.
+              IF sy-subrc NE 0.
+                SELECT SINGLE lifnr
+                  FROM /opt/vim_1head
+                  INTO <fs_data>-lifnr
+                  WHERE bus_objkey = <fs_data>-awkey.
+                IF sy-subrc NE 0.
+                  SELECT SINGLE lifnr
+                    FROM bsik
+                    INTO <fs_data>-lifnr
+                    WHERE bukrs = <fs_data>-bukrs
+                      AND belnr = <fs_data>-belnr
+                      AND gjahr = <fs_data>-gjahr.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+
+            IF <fs_data>-edocument IS NOT INITIAL.
+
+              SELECT SINGLE *
+                FROM /opt/vim_1head
+                INTO @DATA(ls_1head)
+                WHERE bukrs = @<fs_data>-bukrs
+                  AND belnr = @<fs_data>-belnr
+                  AND gjahr = @<fs_data>-gjahr.
+              IF sy-subrc = 0.
+                SELECT SINGLE edocument~source_key, edocument~source_type, edocument~edoc_guid
+                  FROM edocument
+                  INTO @DATA(ls_edocumentfile_fi)
+                  WHERE edoc_guid = @ls_1head-edoc_guid.
+                IF sy-subrc = 0.
+                  <fs_data>-edoc_source_type = ls_edocumentfile_fi-source_type.
+                  <fs_data>-edoc_source_key  = ls_edocumentfile_fi-source_key.
+                  <fs_data>-edoc_guid        = ls_edocumentfile_fi-edoc_guid.
+                  <fs_data>-arc_doc_id       = ls_1head-arc_doc_id.
+                  <fs_data>-sdi_id           = ls_1head-custom_field5.
+
+                  IF <fs_data>-sdi_id IS INITIAL.
+                    lv_id = 'X'.
+                  ENDIF.
+                  CLEAR: ls_data_hash.
+                  MOVE-CORRESPONDING <fs_data> TO ls_data_hash.
+                  CALL METHOD me->get_sdi_id_and_hash
+                    EXPORTING
+                      iv_target = <fs_data>-target
+                    CHANGING
+                      is_data   = ls_data_hash.
+                  MOVE-CORRESPONDING ls_data_hash TO <fs_data>.
+                ENDIF.
+              ELSE.
+                SELECT SINGLE *
+                  FROM /opt/vim_1head
+                  INTO @ls_1head
+                  WHERE bus_objkey = @<fs_data>-awkey.
+                IF sy-subrc = 0.
+                  SELECT SINGLE edocument~source_key, edocument~source_type, edocument~edoc_guid
+                    FROM edocument
+                    INTO @ls_edocumentfile_fi
+                    WHERE edoc_guid = @ls_1head-edoc_guid.
+                  IF sy-subrc = 0.
+                    <fs_data>-edoc_source_type = ls_edocumentfile_fi-source_type.
+                    <fs_data>-edoc_source_key  = ls_edocumentfile_fi-source_key.
+                    <fs_data>-edoc_guid        = ls_edocumentfile_fi-edoc_guid.
+                    <fs_data>-arc_doc_id       = ls_1head-arc_doc_id.
+                    <fs_data>-sdi_id           = ls_1head-custom_field5.
+
+                    IF <fs_data>-sdi_id IS INITIAL.
+                      lv_id = 'X'.
+                    ENDIF.
+                    CLEAR: ls_data_hash.
+                    MOVE-CORRESPONDING <fs_data> TO ls_data_hash.
+                    CALL METHOD me->get_sdi_id_and_hash
+                      EXPORTING
+                        iv_target = <fs_data>-target
+                      CHANGING
+                        is_data   = ls_data_hash.
+                    MOVE-CORRESPONDING ls_data_hash TO <fs_data>.
+
+
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+
+            ENDIF.
+
+          ENDIF.
+
+**********************************************************************
+          "PDF Principale / Allegato
+**********************************************************************
+
+          DATA: lv_object_id TYPE saeobjid.
+
+
+          SELECT *
+            FROM zaos_att_toa
+            INTO TABLE @DATA(lt_att_toa)
+            WHERE doctype = @<fs_data>-zarchiving_doctype
+              AND blart   = @<fs_data>-blart.
+
+
+          IF <fs_data>-target = 'C'.  "SD_INVOICE
+
+            SELECT SINGLE *
+              FROM zsd_pdf_arc_read
+              INTO @DATA(ls_pdf_arc_read)
+              WHERE vbeln = @<fs_data>-vbeln.
+            IF sy-subrc = 0.
+              <fs_data>-filename       = ls_pdf_arc_read-filename.
+              <fs_data>-mtim           = ls_pdf_arc_read-mtim.
+              <fs_data>-active_version = ls_pdf_arc_read-active_version.
+            ENDIF.
+
+            CLEAR: lv_object_id.
+            CONCATENATE <fs_data>-bukrs <fs_data>-belnr <fs_data>-gjahr INTO lv_object_id.
+
+            LOOP AT lt_att_toa ASSIGNING FIELD-SYMBOL(<fs_att_toa>)
+              WHERE counter NE 1.
+              IF <fs_att_toa> IS ASSIGNED.
+                SELECT SINGLE *
+                  FROM toa01
+                  INTO @DATA(ls_toa01)
+                  WHERE sap_object = @<fs_att_toa>-sap_object
+                    AND object_id  = @lv_object_id
+                    AND archiv_id  = @<fs_att_toa>-archiv_id
+                    AND ar_object  = @<fs_att_toa>-ar_object
+                    AND reserve    = @<fs_att_toa>-reserve.
+                IF sy-subrc = 0.
+                  <fs_data>-attachment_found = 'X'.
+                  EXIT.
+                ENDIF.
+              ENDIF.
+            ENDLOOP.
+
+            IF <fs_att_toa> IS ASSIGNED.
+              UNASSIGN <fs_att_toa>.
+            ENDIF.
+
+          ELSEIF <fs_data>-target = 'V'.  "FI_INVOICE
+
+            LOOP AT lt_att_toa ASSIGNING <fs_att_toa>
+              WHERE counter EQ 1.
+              IF <fs_att_toa> IS ASSIGNED.
+                SELECT SINGLE *
+                  FROM toa01
+                  INTO @ls_toa01
+                  WHERE sap_object = @<fs_att_toa>-sap_object
+                    AND arc_doc_id = @<fs_data>-arc_doc_id
+                    AND archiv_id  = @<fs_att_toa>-archiv_id
+                    AND ar_object  = @<fs_att_toa>-ar_object
+                    AND reserve    = @<fs_att_toa>-reserve.
+                IF sy-subrc = 0.
+                  <fs_data>-filename = ls_toa01-object_id.
+                  EXIT.
+                ELSE.
+                  CLEAR: lv_object_id.
+                  CONCATENATE <fs_data>-bukrs <fs_data>-belnr <fs_data>-gjahr INTO lv_object_id.
+                  SELECT SINGLE *
+                    FROM toa01
+                    INTO @ls_toa01
+                    WHERE sap_object = @<fs_att_toa>-sap_object
+                      AND object_id  = @lv_object_id
+                      AND archiv_id  = @<fs_att_toa>-archiv_id
+                      AND ar_object  = @<fs_att_toa>-ar_object
+                      AND reserve    = @<fs_att_toa>-reserve.
+                  IF sy-subrc = 0.
+                    <fs_data>-filename = ls_toa01-object_id.
+                    EXIT.
+                  ELSE.
+                    CLEAR: lv_object_id.
+                    lv_object_id = <fs_data>-awkey.
+                    SELECT SINGLE *
+                      FROM toa01
+                      INTO @ls_toa01
+                      WHERE sap_object = @<fs_att_toa>-sap_object
+                        AND object_id  = @lv_object_id
+                        AND archiv_id  = @<fs_att_toa>-archiv_id
+                        AND ar_object  = @<fs_att_toa>-ar_object
+                        AND reserve    = @<fs_att_toa>-reserve.
+                    IF sy-subrc = 0.
+                      <fs_data>-filename = ls_toa01-object_id.
+                      EXIT.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDLOOP.
+
+            IF <fs_att_toa> IS ASSIGNED.
+              UNASSIGN <fs_att_toa>.
+            ENDIF.
+
+            LOOP AT lt_att_toa ASSIGNING <fs_att_toa>
+              WHERE counter NE 1.
+              IF <fs_att_toa> IS ASSIGNED.
+                SELECT SINGLE *
+                  FROM toa01
+                  INTO @ls_toa01
+                  WHERE sap_object = @<fs_att_toa>-sap_object
+                    AND arc_doc_id = @<fs_data>-arc_doc_id
+                    AND archiv_id  = @<fs_att_toa>-archiv_id
+                    AND ar_object  = @<fs_att_toa>-ar_object
+                    AND reserve    = @<fs_att_toa>-reserve.
+                IF sy-subrc = 0.
+                  <fs_data>-attachment_found = 'X'.
+                  EXIT.
+                ELSE.
+                  CLEAR: lv_object_id.
+                  CONCATENATE <fs_data>-bukrs <fs_data>-belnr <fs_data>-gjahr INTO lv_object_id.
+                  SELECT SINGLE *
+                    FROM toa01
+                    INTO @ls_toa01
+                    WHERE sap_object = @<fs_att_toa>-sap_object
+                      AND object_id  = @lv_object_id
+                      AND archiv_id  = @<fs_att_toa>-archiv_id
+                      AND ar_object  = @<fs_att_toa>-ar_object
+                      AND reserve    = @<fs_att_toa>-reserve.
+                  IF sy-subrc = 0.
+                    <fs_data>-attachment_found = 'X'.
+                    EXIT.
+                  ELSE.
+                    CLEAR: lv_object_id.
+                    lv_object_id = <fs_data>-awkey.
+                    SELECT SINGLE *
+                      FROM toa01
+                      INTO @ls_toa01
+                      WHERE sap_object = @<fs_att_toa>-sap_object
+                        AND object_id  = @lv_object_id
+                        AND archiv_id  = @<fs_att_toa>-archiv_id
+                        AND ar_object  = @<fs_att_toa>-ar_object
+                        AND reserve    = @<fs_att_toa>-reserve.
+                    IF sy-subrc = 0.
+                      <fs_data>-attachment_found = 'X'.
+                      EXIT.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDLOOP.
+
+            IF <fs_att_toa> IS ASSIGNED.
+              UNASSIGN <fs_att_toa>.
+            ENDIF.
+
+          ENDIF.
+
+**********************************************************************
+
+          CLEAR: ls_zaos_data.
+          MOVE-CORRESPONDING <fs_data> TO ls_zaos_data.
+
+          "Fill Metadata
+          CALL METHOD me->fill_metadata
+            EXPORTING
+              is_zaos_data = ls_zaos_data
+            IMPORTING
+              ev_subrc     = lv_subrc.
+          IF lv_subrc <> 0.
+            ls_zaos_data-metadata_incomplete = 'X'.
+          ENDIF.
+
+          CALL METHOD me->check_file_existence
+            CHANGING
+              c_data = ls_zaos_data.
+
+          CLEAR: ls_zaos_data-files_found.
+
+          IF ls_zaos_data-edoc_guid IS NOT INITIAL AND ls_zaos_data-attachment_found IS NOT INITIAL AND ls_zaos_data-no_file IS INITIAL.
+            ls_zaos_data-files_found = '3'.
+          ELSEIF ls_zaos_data-edoc_guid IS INITIAL AND ls_zaos_data-filename IS NOT INITIAL AND ls_zaos_data-attachment_found IS NOT INITIAL AND ls_zaos_data-no_file IS INITIAL.
+            ls_zaos_data-files_found = '3'.
+          ENDIF.
+
+          IF ls_zaos_data-no_file IS NOT INITIAL AND ls_zaos_data-attachment_found IS NOT INITIAL.
+            ls_zaos_data-files_found = '2'.
+          ELSEIF ls_zaos_data-no_file IS NOT INITIAL AND ls_zaos_data-attachment_found IS INITIAL.
+            ls_zaos_data-files_found = '0'.
+          ELSEIF ls_zaos_data-no_file IS INITIAL AND ls_zaos_data-attachment_found IS INITIAL.
+            ls_zaos_data-files_found = '1'.
+          ENDIF.
+
+          APPEND ls_zaos_data TO et_zaos_data.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->GET_SDI_ID_AND_HASH
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_TARGET                      TYPE        ZAOS_DATA-TARGET(optional)
+* | [<-->] IS_DATA                        TYPE        ZAOS_DATA(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_sdi_id_and_hash.
+
+    DATA: lv_xstring  TYPE xstring,
+          lt_xml_data TYPE TABLE OF smum_xmltb,
+          lt_return   TYPE TABLE OF bapiret2.
+
+    CLEAR: lv_xstring,
+           lt_xml_data,
+           lt_return.
+
+    IF is_data-target = 'C'.
+      SELECT SINGLE *
+        FROM edocumentfile
+        INTO @DATA(ls_edocumentfile)
+        WHERE edoc_guid = @is_data-edoc_guid
+          AND file_type = 'DELIV_RCPT'.
+    ELSE.
+      SELECT SINGLE *
+        FROM edocumentfile
+        INTO @ls_edocumentfile
+        WHERE edoc_guid = @is_data-edoc_guid
+          AND file_type = 'METADATA'.
+    ENDIF.
+
+    CHECK ls_edocumentfile IS NOT INITIAL.
+
+    lv_xstring = ls_edocumentfile-file_raw.
+
+    CALL FUNCTION 'SMUM_XML_PARSE'
+      EXPORTING
+        xml_input = lv_xstring
+      TABLES
+        xml_table = lt_xml_data
+        return    = lt_return.
+
+    READ TABLE lt_xml_data ASSIGNING FIELD-SYMBOL(<fs_xml_data>)
+      WITH KEY cname = 'Hash'.
+    IF sy-subrc = 0.
+      is_data-sdi_hash = <fs_xml_data>-cvalue.
+    ENDIF.
+
+    READ TABLE lt_xml_data ASSIGNING <fs_xml_data>
+      WITH KEY cname = 'IdentificativoSdI'.
+    IF sy-subrc = 0.
+      is_data-sdi_id = <fs_xml_data>-cvalue.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->PARSE_XML
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] I_XML_STRING                   TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD parse_xml.
+
+    DATA: pixml          TYPE REF TO if_ixml,
+          pdocument      TYPE REF TO if_ixml_document,
+          pstreamfactory TYPE REF TO if_ixml_stream_factory,
+          pistream       TYPE REF TO if_ixml_istream,
+          pparser        TYPE REF TO if_ixml_parser,
+          pnode          TYPE REF TO if_ixml_node,
+          ptext          TYPE REF TO if_ixml_text,
+          string         TYPE string,
+          count          TYPE i,
+          index          TYPE i,
+          totalsize      TYPE i.
+
+*-- create the main factory
+    pixml = cl_ixml=>create( ).
+
+*-- create the initial document
+    pdocument = pixml->create_document( ).
+
+*-- create the stream factory
+    pstreamfactory = pixml->create_stream_factory( ).
+
+*-- create an input stream for the string
+    pistream = pstreamfactory->create_istream_string( string = i_xml_string ).
+
+*-- create the parser
+    pparser = pixml->create_parser( stream_factory = pstreamfactory
+                                    istream        = pistream
+                                    document       = pdocument ).
+
+*-- parse the stream
+    IF pparser->parse( ) NE 0.
+      IF pparser->num_errors( ) NE 0.
+        count = pparser->num_errors( ).
+        WRITE: count, ' parse errors have occured:'.        "#EC NOTEXT
+        DATA: pparseerror TYPE REF TO if_ixml_parse_error,
+              i           TYPE i.
+        index = 0.
+        WHILE index < count.
+          pparseerror = pparser->get_error( index = index ).
+          i = pparseerror->get_line( ).
+*       write: 'line: ', i.                           "#EC NOTEXT
+          i = pparseerror->get_column( ).
+*        write: 'column: ', i.                         "#EC NOTEXT
+          string = pparseerror->get_reason( ).
+          WRITE: string.
+          MESSAGE string  TYPE 'I'.
+
+          index = index + 1.
+        ENDWHILE.
+      ENDIF.
+    ENDIF.
+
+*-- we don't need the stream any more, so let's close it...
+    CALL METHOD pistream->close( ).
+    CLEAR pistream.
+
+*-- if Count > 0 then the XML File had troubles like incomplete tags, missing parts, etc.
+    IF count > 0.
+      EXIT.
+    ENDIF.
+
+*-- print the whole DOM tree as a list...
+    pnode = pdocument.
+    me->print_node( CHANGING i_pnode = pnode ).
+
+    BREAK-POINT.
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->PASSWORD_ENCRYPT_DECRYPT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_ENCRYPT                     TYPE        SAP_BOOL(optional)
+* | [--->] IV_DECRYPT                     TYPE        SAP_BOOL(optional)
+* | [--->] IV_PASSWORD_IN                 TYPE        ZIXCE_PASSWORD
+* | [<---] IV_PASSWORD_OUT                TYPE        ZIXCE_PASSWORD
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method PASSWORD_ENCRYPT_DECRYPT.
+
+  DATA: lo_encryptor    TYPE REF TO cl_hard_wired_encryptor,
+        lo_root         TYPE REF TO cx_root,
+        lv_password_in  TYPE string,
+        lv_password_out TYPE string.
+
+  CLEAR: lv_password_in,
+         lv_password_out.
+
+  CREATE OBJECT lo_encryptor.
+
+  lv_password_in = iv_password_in.
+
+******** Encrypting *******************
+  IF iv_encrypt IS NOT INITIAL.
+    TRY.
+        CALL METHOD lo_encryptor->encrypt_string2string
+          EXPORTING
+            the_string = lv_password_in
+          RECEIVING
+            result     = lv_password_out.
+      CATCH cx_encrypt_error .
+        DATA(error) = lo_root->get_text( ).
+    ENDTRY.
+  ENDIF.
+******** Decrypting *******************
+  IF iv_decrypt IS NOT INITIAL.
+    TRY.
+        CALL METHOD lo_encryptor->decrypt_string2string
+          EXPORTING
+            the_string = lv_password_in
+          RECEIVING
+            result     = lv_password_out.
+      CATCH cx_encrypt_error .
+        error = lo_root->get_text( ).
+    ENDTRY.
+  ENDIF.
+
+  iv_password_out = lv_password_out.
+
+  endmethod.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->PRINT_NODE
+* +-------------------------------------------------------------------------------------------------+
+* | [<-->] I_PNODE                        TYPE REF TO IF_IXML_NODE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD print_node.
+
+    TYPES: BEGIN OF xml_file_list,
+             name(50) TYPE c,
+             value    TYPE string,
+           END OF xml_file_list.
+
+    DATA: indent TYPE i,
+          ptext  TYPE REF TO if_ixml_text,
+          string TYPE string,
+          name   TYPE string,
+          value  TYPE string,
+          ls_xml TYPE xml_file_list,
+          lt_xml TYPE TABLE OF xml_file_list.
+
+    indent  = i_pnode->get_height( ) * 2.
+
+    CASE i_pnode->get_type( ).
+      WHEN if_ixml_node=>co_node_element.
+        ls_xml-name = i_pnode->get_name( ).
+        TRANSLATE ls_xml-name TO UPPER CASE.
+
+      WHEN if_ixml_node=>co_node_text.
+        ptext ?= i_pnode->query_interface( ixml_iid_text ).
+        IF ptext->ws_only( ) IS INITIAL.
+          value = i_pnode->get_value( ).
+          ls_xml-value = value.
+        ENDIF.
+    ENDCASE.
+
+    APPEND ls_xml TO lt_xml.
+
+    i_pnode = i_pnode->get_first_child( ).
+
+    WHILE NOT i_pnode IS INITIAL.
+      me->print_node( CHANGING i_pnode = i_pnode ).
+      IF i_pnode IS NOT INITIAL.
+        i_pnode = i_pnode->get_next( ).
+      ENDIF.
+    ENDWHILE.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->SAVE_DATA_INTO_DB_TABLE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IT_ZAOS_DATA                   TYPE        ZAOS_DATA_T
+* | [<---] EV_SUBRC                       TYPE        SY-SUBRC
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  method SAVE_DATA_INTO_DB_TABLE.
+
+    DATA: lt_zaos_data TYPE TABLE OF zaos_data.
+
+    CLEAR: lt_zaos_data,
+           ev_subrc.
+
+    lt_zaos_data = it_zaos_data.
+
+    LOOP AT lt_zaos_data ASSIGNING FIELD-SYMBOL(<fs_zaos_data>).
+      IF <fs_zaos_data> IS ASSIGNED.
+        INSERT zaos_data FROM <fs_zaos_data>.
+        IF sy-subrc <> 0.
+          MODIFY zaos_data FROM <fs_zaos_data>.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+
+  endmethod.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_AOS_METHODS->UPDATE_EXISTING_DATA
+* +-------------------------------------------------------------------------------------------------+
+* | [<---] E_RETURN                       TYPE        SAP_BOOL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD update_existing_data.
+
+    DATA: lv_return TYPE string,
+          lv_status TYPE string.
+
+    CLEAR: lv_return,
+           lv_status,
+           e_return.
+
+    SELECT
+      zaos_data~bukrs,
+      zaos_data~belnr,
+      zaos_data~gjahr,
+      zaos_log~identificativo,
+      zaos_log~pacchetto,
+      zaos_log~identificativo_versamento
+      FROM zaos_log
+      INNER JOIN zaos_data
+      ON  zaos_data~identificativo = zaos_log~identificativo
+      AND zaos_data~pacchetto      = zaos_log~pacchetto
+      INTO TABLE @DATA(lt_aos_log)
+      WHERE status NE @space.
+    IF sy-subrc = 0.
+
+      LOOP AT lt_aos_log ASSIGNING FIELD-SYMBOL(<fs_log>).
+        IF <fs_log> IS ASSIGNED.
+          CALL FUNCTION 'ZAOS_IXCE_UPDATE_STATUS'
+            EXPORTING
+              i_id_versamento = <fs_log>-identificativo_versamento
+            IMPORTING
+              e_return        = lv_return
+              e_status        = lv_status.
+          IF lv_status IS NOT INITIAL.
+            SELECT SINGLE *
+              FROM zaos_data
+              INTO @DATA(ls_aos_data)
+              WHERE bukrs = @<fs_log>-bukrs
+                AND belnr = @<fs_log>-belnr
+                AND gjahr = @<fs_log>-gjahr.
+            IF sy-subrc = 0.
+              e_return = 'X'.
+              ls_aos_data-status = lv_status.
+              IF ls_aos_data-status = 'CONSERVAZIONEEFFETTUATA'.
+                ls_aos_data-conservato = 'X'.
+              ELSEIF ls_aos_data-status = 'PREELABORAZIONECONERRORI'.
+                ls_aos_data-conservato = 'E'.
+                ls_aos_data-error      = 'X'.
+              ENDIF.
+              UPDATE zaos_data FROM ls_aos_data.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+
+    ENDIF.
+
+    SELECT *
+      FROM zaos_registri
+      INTO TABLE @DATA(lt_aos_reg)
+      WHERE status NE @space.
+    IF sy-subrc = 0.
+
+      LOOP AT lt_aos_reg ASSIGNING FIELD-SYMBOL(<fs_reg>).
+        IF <fs_reg> IS ASSIGNED.
+          CALL FUNCTION 'ZAOS_IXCE_UPDATE_STATUS'
+            EXPORTING
+              i_id_versamento = <fs_reg>-identificativo_versamento
+            IMPORTING
+              e_return        = lv_return
+              e_status        = lv_status.
+          IF lv_status IS NOT INITIAL.
+            e_return = 'X'.
+            <fs_reg>-status = lv_status.
+            IF <fs_reg>-status = 'CONSERVAZIONEEFFETTUATA'.
+              <fs_reg>-conservato = 'X'.
+            ELSEIF <fs_reg>-status = 'PREELABORAZIONECONERRORI'.
+              <fs_reg>-conservato = 'E'.
+              <fs_reg>-error      = 'X'.
+            ENDIF.
+            UPDATE zaos_registri FROM <fs_reg>.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+
+    ENDIF.
+
+
+  ENDMETHOD.
+ENDCLASS.
