@@ -1,0 +1,255 @@
+*&---------------------------------------------------------------------*
+*& Report ZAOS_LOG
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zaos_log.
+
+TABLES: zaos_data.
+
+"Classes
+CLASS lcl_event_handler   DEFINITION DEFERRED.
+
+"Types
+TYPE-POOLS: icon.
+
+TYPES: BEGIN OF ty_alv.
+    INCLUDE TYPE zaos_log.
+TYPES: icon_xml(4) TYPE c.
+"TYPES: delete      TYPE sap_bool.
+TYPES: END OF ty_alv.
+TYPES: ty_alv_t TYPE TABLE OF ty_alv.
+
+DATA: gt_alv     TYPE ty_alv_t,
+      gs_alv     TYPE ty_alv,
+      go_grid    TYPE REF TO cl_gui_alv_grid,
+      go_handler TYPE REF TO lcl_event_handler,
+      "go_general TYPE REF TO lcl_general_methods,
+      ok_code    TYPE sy-ucomm.
+
+SELECT-OPTIONS: s_bukrs FOR zaos_data-bukrs,
+                s_belnr FOR zaos_data-belnr,
+                s_gjahr FOR zaos_data-gjahr,
+                s_id    FOR zaos_data-identificativo,
+                s_id_p  FOR gs_alv-identificativo_versamento.
+
+START-OF-SELECTION.
+
+  PERFORM get_data.
+
+*---------------------------------------------------------------------*
+*       CLASS lcl_event_handler DEFINITION
+*---------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS:
+
+      hotspot_click
+                    FOR EVENT hotspot_click OF cl_gui_alv_grid
+        IMPORTING e_row_id
+                    e_column_id
+                    es_row_no.
+
+ENDCLASS.                    "lcl_event_handler DEFINITION
+
+*---------------------------------------------------------------------*
+*       CLASS lcl_event_handler IMPLEMENTATION
+*---------------------------------------------------------------------*
+CLASS lcl_event_handler IMPLEMENTATION.
+
+  "Hotspot
+  METHOD hotspot_click.
+    PERFORM hotspot_clicked USING e_row_id
+                                  e_column_id
+                                  es_row_no.
+  ENDMETHOD.                 "hotspot_click
+
+ENDCLASS.                    "LCL_EVENT_HANDLER IMPLEMENTATION
+
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+
+  SET PF-STATUS 'MAIN100'.
+  SET TITLEBAR 'MAIN100'.
+
+  DATA: lv_container        TYPE scrfname VALUE 'CUSTOM_CONTROL',
+        lo_custom_container TYPE REF TO cl_gui_docking_container,
+        ls_layout           TYPE lvc_s_layo,
+        ls_variant          TYPE disvariant,
+        lt_fieldcat         TYPE lvc_t_fcat,
+        lc_x                TYPE char1 VALUE 'X'.
+
+  IF lo_custom_container IS INITIAL.
+
+    CREATE OBJECT lo_custom_container
+      EXPORTING
+        side                        = cl_gui_docking_container=>dock_at_left
+        extension                   = 99999
+        caption                     = 'IXCE Log'
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+
+    CREATE OBJECT go_grid
+      EXPORTING
+        i_parent = lo_custom_container.
+
+    CREATE OBJECT go_handler.
+    SET HANDLER go_handler->hotspot_click FOR go_grid.
+
+    PERFORM build_fieldcatalog CHANGING lt_fieldcat.
+
+    ls_layout-sel_mode  = 'D'.
+    ls_variant-report   = sy-repid.
+    ls_variant-username = sy-uname.
+    "ls_variant-variant  = p_var.
+
+    CALL METHOD go_grid->set_table_for_first_display
+      EXPORTING
+        is_layout       = ls_layout
+        is_variant      = ls_variant
+        i_save          = 'A'
+      CHANGING
+        it_fieldcatalog = lt_fieldcat
+        it_outtab       = gt_alv.
+
+  ENDIF.
+
+
+ENDMODULE.                 " STATUS_0100  OUTPUT
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+
+  DATA: save_ok TYPE sy-ucomm.
+
+  save_ok = ok_code.
+  CLEAR ok_code.
+
+  CASE save_ok.
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+  ENDCASE.
+
+ENDMODULE.                 " USER_COMMAND_0100  INPUT
+
+*&---------------------------------------------------------------------*
+*&      Form  BUILD_FIELDCATALOG
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog CHANGING pt_fieldcat TYPE lvc_t_fcat.
+
+  DATA: ls_fieldcat TYPE lvc_s_fcat,
+        lv_lines    TYPE i.
+
+  CLEAR: ls_fieldcat,
+         lv_lines.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name       = 'ZAOS_LOG'
+    CHANGING
+      ct_fieldcat            = pt_fieldcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+  IF pt_fieldcat IS NOT INITIAL.
+    DESCRIBE TABLE pt_fieldcat LINES lv_lines.
+    "Icon
+    CLEAR: ls_fieldcat.
+    ls_fieldcat-fieldname = 'ICON_XML'.
+    ls_fieldcat-scrtext_s = 'T. Est.'.
+    ls_fieldcat-scrtext_m = 'T. Est.'.
+    ls_fieldcat-scrtext_l = 'Testo Esteso'.
+    ls_fieldcat-col_opt   = 'X'.
+    ls_fieldcat-col_pos   = '8'.
+    ls_fieldcat-hotspot   = 'X'.
+    APPEND ls_fieldcat TO pt_fieldcat.
+  ENDIF.
+
+ENDFORM.                    " BUILD_FIELDCATALOG
+
+*&---------------------------------------------------------------------*
+*&      Form  HOTSPOT_CLICKED
+*&---------------------------------------------------------------------*
+FORM hotspot_clicked USING p_e_row_id    STRUCTURE lvc_s_row
+                           p_e_column_id STRUCTURE lvc_s_col
+                           p_es_row_no   STRUCTURE lvc_s_roid.
+
+  IF p_e_row_id-rowtype IS INITIAL.
+    READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+      INDEX p_e_row_id-index.
+    IF <fs_alv> IS ASSIGNED.
+      CASE p_e_column_id-fieldname.
+        WHEN 'ICON_XML'.
+          PERFORM show_xml USING <fs_alv>.
+      ENDCASE.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_XML
+*&---------------------------------------------------------------------*
+FORM show_xml USING ps_alv TYPE ty_alv.
+
+  IF ps_alv-error_string IS NOT INITIAL.
+    cl_abap_browser=>show_xml( xml_xstring = ps_alv-error_string title = 'Error Long Text' ).
+  ELSE.
+    MESSAGE 'No error text to display' TYPE 'W'.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+FORM get_data .
+
+  CLEAR: gt_alv.
+
+  SELECT *
+    FROM zaos_log
+    INTO CORRESPONDING FIELDS OF TABLE gt_alv
+    WHERE bukrs                     IN s_bukrs
+      AND belnr                     IN s_belnr
+      AND gjahr                     IN s_gjahr
+      AND identificativo            IN s_id
+      AND identificativo_versamento IN s_id_p.
+  IF sy-subrc <> 0.
+    MESSAGE 'No logs to show' TYPE 'E'.
+  ELSE.
+    PERFORM fill_icons.
+    SORT gt_alv BY bukrs belnr gjahr counter ASCENDING.
+    CALL SCREEN 100.
+  ENDIF.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  FILL_ICONS
+*&---------------------------------------------------------------------*
+FORM fill_icons .
+
+  "ICON_2 ICON_XML_DOC                   '@R4@'."  XML document
+
+  LOOP AT gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED AND <fs_alv>-error_string IS NOT INITIAL.
+      <fs_alv>-icon_xml = '@R4@'.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
