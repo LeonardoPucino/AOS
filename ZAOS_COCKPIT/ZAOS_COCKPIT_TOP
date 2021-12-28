@@ -1,0 +1,108 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZAOS_COCKPIT_TOP
+*&---------------------------------------------------------------------*
+
+TABLES: bkpf,
+        vbrk,
+        vbpa,
+        zaos_data,
+        zaos_doctype,
+        zsd_pdf_arc_read.
+
+"Types
+TYPE-POOLS: icon.
+
+TYPES: tr_bukrs TYPE RANGE OF bukrs,
+       tr_bldat TYPE RANGE OF bldat,
+       tr_blart TYPE RANGE OF blart,
+       tr_archd TYPE RANGE OF zaos_archiving_doctype.
+
+TYPES: BEGIN OF ty_alv.
+    INCLUDE TYPE zaos_data.
+TYPES: icon_inviato(4)     TYPE c,
+       icon_conservato(4)  TYPE c,
+       icon_allowed(4)     TYPE c,
+       icon_errors(4)      TYPE c,
+       icon_attachment(4)  TYPE c,
+       icon_no_file(4)     TYPE c,
+       icon_gos(4)         TYPE c,
+       icon_metadata(4)    TYPE c,
+       icon_locked(4)      TYPE c,
+       allegato            TYPE sap_bool,
+       celltab             TYPE lvc_t_styl.
+TYPES: END OF ty_alv.
+TYPES: ty_alv_t TYPE TABLE OF ty_alv.
+
+TYPES: BEGIN OF ty_alv_200,
+         label TYPE char50,
+         value TYPE char70,
+         field TYPE char50.
+"celltab TYPE lvc_t_styl.
+TYPES: END OF ty_alv_200.
+TYPES: ty_alv_200_t TYPE TABLE OF ty_alv_200.
+
+TYPES: BEGIN OF ty_alv_300.
+    INCLUDE TYPE zaos_registri.
+*TYPES: icon_inviato(4)     TYPE c,
+*       icon_conservato(4)  TYPE c,
+*       icon_allowed(4)     TYPE c,
+*       icon_errors(4)      TYPE c,
+*       icon_locked(4)      TYPE c.
+"celltab TYPE lvc_t_styl.
+TYPES: END OF ty_alv_300.
+TYPES: ty_alv_300_t TYPE TABLE OF ty_alv_300.
+
+CLASS lcl_event_handler DEFINITION DEFERRED.
+CLASS lcl_general_methods DEFINITION DEFERRED.
+
+DATA: lr_bukrs TYPE tr_bukrs,
+      lr_bldat TYPE tr_bldat,
+      lr_blart TYPE tr_blart,
+      lr_archd TYPE tr_archd.
+
+DATA: gt_alv      TYPE TABLE OF ty_alv,
+      gt_alv_200  TYPE TABLE OF ty_alv_200,
+      gt_alv_300  TYPE ty_alv_300_t,
+      go_grid_100 TYPE REF TO cl_gui_alv_grid,
+      go_grid_200 TYPE REF TO cl_gui_alv_grid,
+      go_grid_300 TYPE REF TO cl_gui_alv_grid,
+      ok_code     TYPE sy-ucomm.
+
+DATA: go_dyndoc_id       TYPE REF TO cl_dd_document,
+      go_splitter        TYPE REF TO cl_gui_splitter_container,
+      go_parent_grid     TYPE REF TO cl_gui_container,
+      go_html_cntrl      TYPE REF TO cl_gui_html_viewer,
+      go_parent_html     TYPE REF TO cl_gui_container,
+      go_handler         TYPE REF TO lcl_event_handler,
+      go_dyndoc_id_300   TYPE REF TO cl_dd_document,
+      go_splitter_300    TYPE REF TO cl_gui_splitter_container,
+      go_parent_grid_300 TYPE REF TO cl_gui_container,
+      go_html_cntrl_300  TYPE REF TO cl_gui_html_viewer,
+      go_parent_html_300 TYPE REF TO cl_gui_container,
+      go_handler_300     TYPE REF TO lcl_event_handler,
+      go_pdf_container   TYPE REF TO cl_gui_docking_container,
+      go_general         TYPE REF TO lcl_general_methods,
+      go_gos             TYPE REF TO cl_gos_manager,
+      gv_document        TYPE string,
+      gt_fcat            TYPE lvc_t_fcat,
+      gt_fcat_300        TYPE lvc_t_fcat,
+      gs_fcat            TYPE lvc_s_fcat,
+      gv_metadata_bukrs  TYPE bukrs,
+      gv_metadata_belnr  TYPE belnr_d,
+      gv_metadata_gjahr  TYPE gjahr,
+      gv_metadata_bldat  TYPE bldat,
+      gv_edit            TYPE sap_bool,
+      gv_refresh         TYPE sap_bool.
+
+DATA: lo_aos_cockpit_class TYPE REF TO zaos_cockpit_class,
+      mo_tree              TYPE REF TO cl_gui_alv_tree,
+      mo_container         TYPE REF TO cl_gui_container.
+
+DATA: mo_main_container      TYPE REF TO cl_gui_custom_container,
+      mo_main_splitter       TYPE REF TO cl_gui_splitter_container,
+      mo_container_left      TYPE REF TO cl_gui_container,
+      mo_container_right     TYPE REF TO cl_gui_container,
+      mo_splitter_right      TYPE REF TO cl_gui_splitter_container,
+      mo_sel_toolbar_ui      TYPE REF TO cl_edoc_sel_toolbar_ui,
+      mv_height_sel_overview TYPE i,
+      mt_tree_hier_empty     TYPE zaos_sel_overview_tree_tab.
