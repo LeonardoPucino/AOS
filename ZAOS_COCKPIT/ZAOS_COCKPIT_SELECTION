@@ -1,0 +1,72 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZAOS_COCKPIT_SELECTION
+*&---------------------------------------------------------------------*
+
+SELECTION-SCREEN BEGIN OF BLOCK b00 WITH FRAME TITLE TEXT-b00.
+"SELECT-OPTIONS: s_bukrs FOR bkpf-bukrs OBLIGATORY MEMORY ID buk .
+PARAMETERS p_bukrs TYPE bkpf-bukrs OBLIGATORY MEMORY ID buk.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN ULINE.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_radio1 RADIOBUTTON GROUP rad1 DEFAULT 'X' USER-COMMAND rad.
+
+SELECTION-SCREEN SKIP.
+
+SELECT-OPTIONS: s_belnr FOR bkpf-belnr.
+SELECT-OPTIONS: s_gjahr FOR bkpf-gjahr,
+                s_blart FOR bkpf-blart,
+                s_monat FOR bkpf-monat,
+                s_bldat FOR bkpf-bldat,
+                s_budat FOR bkpf-budat,
+                s_archd FOR zaos_doctype-zarchiving_doctype,
+                s_vbeln FOR vbrk-vbeln,
+                s_kunnr FOR vbpa-kunnr,
+                s_lifnr FOR vbpa-lifnr,
+                s_usnam FOR bkpf-usnam.
+
+SELECTION-SCREEN SKIP.
+
+SELECTION-SCREEN COMMENT /1(25) text-001.
+PARAMETERS: p_all   RADIOBUTTON GROUP rad2,
+            p_arch  RADIOBUTTON GROUP rad2,
+            p_ready RADIOBUTTON GROUP rad2,
+            p_err   RADIOBUTTON GROUP rad2.
+
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_var TYPE slis_vari DEFAULT '/DEFAULT'.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN ULINE.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_radio5 RADIOBUTTON GROUP rad1.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN ULINE.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_radio2 RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN SKIP.
+"PARAMETERS:     p_datum LIKE sy-datum.
+SELECT-OPTIONS: s_arch  FOR zaos_doctype-zarchiving_doctype.
+SELECT-OPTIONS: s_datum FOR sy-datum.
+SELECTION-SCREEN SKIP.
+PARAMETERS: p_check AS CHECKBOX.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN ULINE.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_radio3 RADIOBUTTON GROUP rad1.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN ULINE.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_radio4 RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN END OF BLOCK b00.
