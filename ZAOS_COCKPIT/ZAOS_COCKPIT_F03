@@ -1,0 +1,306 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZAOS_COCKPIT_F03
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  LAUNCH_JOB
+*&---------------------------------------------------------------------*
+FORM start_job .
+
+  DATA: lv_jobcount   TYPE tbtcjob-jobcount,
+        lv_jobname    TYPE tbtcjob-jobname,
+        lv_release(1) TYPE c,
+        lt_sel        TYPE TABLE OF rsparams,
+        ls_sel        TYPE rsparams,
+        lv_answer     TYPE c,
+        ls_bapiret    TYPE bapiret2,
+        lt_bapiret    TYPE TABLE OF bapiret2.
+
+  SELECT SINGLE *
+    FROM zaos_auth_user
+    INTO @DATA(ls_auth_user)
+    WHERE uname      = @sy-uname
+      AND sysid      = @sy-sysid
+      AND authorized = 'X'.
+  IF sy-subrc NE 0.
+    MESSAGE e031(zaos_message).
+  ENDIF.
+
+  IF   p_bukrs   IS INITIAL
+    OR s_arch[]  IS INITIAL
+    OR s_datum[] IS INITIAL.
+    MESSAGE 'All launch parameters must be filled' TYPE 'E'.
+  ENDIF.
+
+  IF p_check IS INITIAL.
+
+    SELECT
+      zarchiving_doctype,
+      gjahr,
+      COUNT(*)     AS count,
+      MAX( belnr ) AS max,
+      MIN( belnr ) AS min,
+      0            AS diff,
+      'X'          AS error
+    FROM zaos_data
+    INTO TABLE @DATA(lt_data)
+    WHERE zarchiving_doctype IN @s_arch
+      AND budat              IN @s_datum
+      AND allowed    EQ 'X'
+      AND conservato NE 'X'
+      AND inv_conservazione NE 'X'
+    GROUP BY zarchiving_doctype, gjahr.
+    IF sy-subrc = 0.
+      LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<fs_data>).
+        IF <fs_data> IS ASSIGNED.
+          CLEAR: <fs_data>-diff, <fs_data>-error.
+          <fs_data>-diff = <fs_data>-max - <fs_data>-min.
+          ADD 1 TO <fs_data>-diff.
+          IF <fs_data>-diff NE <fs_data>-count.
+            <fs_data>-error = 'X'.
+            DATA(lv_popup) = 'X'.
+            CLEAR: ls_bapiret.
+            ls_bapiret-type   = 'W'.
+            ls_bapiret-id     = 'ZAOS_MESSAGE'.
+            ls_bapiret-number = '032'.
+            ls_bapiret-message_v1 = <fs_data>-zarchiving_doctype.
+            ls_bapiret-message_v2 = <fs_data>-diff.
+            ls_bapiret-message_v3 = <fs_data>-count.
+            CONDENSE ls_bapiret-message_v2.
+            CONDENSE ls_bapiret-message_v3.
+            CONCATENATE 'Doc. Type' <fs_data>-zarchiving_doctype ': selected documents' ls_bapiret-message_v3 ', total documents in range' ls_bapiret-message_v2
+              INTO ls_bapiret-message SEPARATED BY space.
+            APPEND ls_bapiret TO lt_bapiret.
+          ENDIF.
+
+          "Verificare se ultimo numero archiaviato per company/classe +1 è uguale al primo numero della classe che sto per conservare, verificare che pacchetto precedente non sia in errore
+
+          IF <fs_data>-min+8(2) NE '00'.
+            DATA lv_belnr TYPE belnr_d.
+            CLEAR: lv_belnr.
+
+            lv_belnr = <fs_data>-min.
+            lv_belnr = lv_belnr - 1.
+
+            CONDENSE lv_belnr.
+
+            CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+              EXPORTING
+                input  = lv_belnr
+              IMPORTING
+                output = lv_belnr.
+
+            SELECT SINGLE status
+              FROM zaos_data
+              INTO @DATA(lv_status)
+              WHERE bukrs = @p_bukrs
+                AND belnr = @lv_belnr
+                AND gjahr = @<fs_data>-gjahr.
+            IF sy-subrc = 0.
+              CASE lv_status.
+                WHEN 'CHIUSO'.
+
+                WHEN 'CONSERVAZIONEEFFETTUATA'.
+
+                WHEN 'CLOSED'.
+
+                WHEN OTHERS.
+                  lv_popup = 'X'.
+                  CLEAR: ls_bapiret.
+                  ls_bapiret-type   = 'W'.
+                  ls_bapiret-id     = 'ZAOS_MESSAGE'.
+                  ls_bapiret-number = '038'.
+                  ls_bapiret-message_v1 = <fs_data>-zarchiving_doctype.
+                  ls_bapiret-message_v2 = <fs_data>-min.
+                  CONCATENATE 'Doc.' ls_bapiret-message_v2 'Doc. Type' ls_bapiret-message_v1 ': Previous package not yet processed correctly.'
+                               INTO ls_bapiret-message SEPARATED BY space.
+                  APPEND ls_bapiret TO lt_bapiret.
+              ENDCASE.
+            ELSE.
+              CLEAR: ls_bapiret.
+              ls_bapiret-type   = 'W'.
+              ls_bapiret-id     = 'ZAOS_MESSAGE'.
+              ls_bapiret-number = '037'.
+              ls_bapiret-message_v1 = <fs_data>-zarchiving_doctype.
+              ls_bapiret-message_v2 = <fs_data>-min.
+              CONCATENATE 'Doc.' ls_bapiret-message_v2 'Doc. Type' ls_bapiret-message_v1 ': Previous package not found.'
+                           INTO ls_bapiret-message SEPARATED BY space.
+              APPEND ls_bapiret TO lt_bapiret.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_popup IS NOT INITIAL.
+      CALL FUNCTION 'RSCRMBW_DISPLAY_BAPIRET2'
+        TABLES
+          it_return = lt_bapiret.
+      IF sy-ucomm NE 'OK'.
+        MESSAGE w026(zaos_message).
+        EXIT.
+      ENDIF.
+    ENDIF.
+
+  ENDIF.
+
+  CONCATENATE 'ZAOS_ARCHIVING_' p_bukrs INTO lv_jobname.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Start Job'
+      text_question  = 'Start archiving job?'
+      text_button_1  = 'Yes'
+      text_button_2  = 'No'
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+
+    CALL FUNCTION 'JOB_OPEN'
+      EXPORTING
+        jobname          = lv_jobname
+      IMPORTING
+        jobcount         = lv_jobcount
+      EXCEPTIONS
+        cant_create_job  = 1
+        invalid_job_data = 2
+        jobname_missing  = 3
+        OTHERS           = 4.
+    IF sy-subrc <> 0.
+      MESSAGE e005(zaos_message) DISPLAY LIKE 'E'.
+    ENDIF.
+
+    SUBMIT zaos_archiving_job
+      WITH p_bukrs = p_bukrs
+      WITH s_arch  IN s_arch
+      WITH s_datum IN s_datum
+      VIA JOB lv_jobname
+      NUMBER lv_jobcount
+      TO SAP-SPOOL WITHOUT SPOOL DYNPRO
+      WITH immediately = 'X'
+      WITH keep_in_spool = 'X'
+      AND RETURN.
+
+
+    CALL FUNCTION 'JOB_CLOSE'
+      EXPORTING
+        jobcount             = lv_jobcount
+        jobname              = lv_jobname
+        strtimmed            = 'X'
+      IMPORTING
+        job_was_released     = lv_release
+      EXCEPTIONS
+        cant_start_immediate = 1
+        invalid_startdate    = 2
+        jobname_missing      = 3
+        job_close_failed     = 4
+        job_nosteps          = 5
+        job_notex            = 6
+        lock_failed          = 7
+        invalid_target       = 8
+        OTHERS               = 9.
+    IF sy-subrc <> 0.
+      MESSAGE e006(zaos_message) DISPLAY LIKE 'E'.
+    ELSE.
+      MESSAGE i024(zaos_message).
+    ENDIF.
+
+  ELSE.
+    MESSAGE w026(zaos_message).
+  ENDIF.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CALL_SM37
+*&---------------------------------------------------------------------*
+FORM call_sm37 .
+
+  DATA from_date TYPE btcsdate .
+  DATA lt_from_data TYPE TABLE OF bdcdata.
+  DATA ls_from_data LIKE LINE OF lt_from_data.
+
+  ls_from_data-program = 'SAPLBTCH'.
+  ls_from_data-dynpro = '2170'.
+  ls_from_data-dynbegin = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+*  CLEAR ls_from_data.
+*  ls_from_data-fnam = 'BTCH2170-FROM_DATE'.
+*  ls_from_data-fval = sy-datum .
+*  APPEND ls_from_data TO lt_from_data.
+*
+*
+*  CLEAR ls_from_data.
+*  ls_from_data-fnam = 'BTCH2170-TO_DATE'.
+*  ls_from_data-fval = sy-datum .
+*  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-JOBNAME'.
+  "ls_from_data-fval = 'ZAOS_ARCHIVING'.
+  CONCATENATE 'ZAOS_ARCHIVING_' p_bukrs INTO ls_from_data-fval.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-USERNAME'.
+  ls_from_data-fval = '*'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-SCHEDUL'.
+  ls_from_data-fval = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-READY'.
+  ls_from_data-fval = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-RUNNING'.
+  ls_from_data-fval = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-FINISHED'.
+  ls_from_data-fval = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BTCH2170-ABORTED'.
+  ls_from_data-fval = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BDC_OKCODE'.
+  ls_from_data-fval = '=DOIT' .
+  APPEND ls_from_data TO lt_from_data.
+
+
+  CLEAR ls_from_data.
+  ls_from_data-program = 'SAPLBTCH'.
+  ls_from_data-dynpro = '2170'.
+  ls_from_data-dynbegin = 'X'.
+  APPEND ls_from_data TO lt_from_data.
+
+  CLEAR ls_from_data.
+  ls_from_data-fnam = 'BDC_OKCODE'.
+  ls_from_data-fval = '/EECAN' .
+  APPEND ls_from_data TO lt_from_data.
+
+  CALL TRANSACTION 'SM37' USING lt_from_data MODE 'E'.
+
+ENDFORM.
