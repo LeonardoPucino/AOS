@@ -1,0 +1,48 @@
+*&---------------------------------------------------------------------*
+*& Report ZAOS_COCKPIT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zaos_cockpit.
+
+INCLUDE zaos_cockpit_top.
+INCLUDE zaos_cockpit_selection.
+INCLUDE zaos_cockpit_f01.
+INCLUDE zaos_cockpit_f02.
+INCLUDE zaos_cockpit_f03.
+
+INITIALIZATION.
+
+  PERFORM initialization.
+
+AT SELECTION-SCREEN ON p_bukrs.
+
+  PERFORM check_bukrs.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_var.
+
+  PERFORM variant_help.
+
+START-OF-SELECTION.
+
+  PERFORM authority_checks.
+
+  IF p_radio1 IS NOT INITIAL OR p_radio3 IS NOT INITIAL.
+
+    PERFORM get_data.
+
+    PERFORM display.
+
+  ELSEIF p_radio2 IS NOT INITIAL.
+
+    PERFORM start_job.
+
+  ELSEIF p_radio4 IS NOT INITIAL.
+
+    PERFORM call_sm37.
+
+  ELSEIF p_radio5 IS NOT INITIAL.
+
+    PERFORM call_300.
+
+  ENDIF.
