@@ -1,0 +1,3373 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZAOS_COCKPIT_F01
+*&---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+*       CLASS lcl_event_handler DEFINITION
+*---------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION .
+  PUBLIC SECTION .
+    METHODS:
+
+*
+*      handle_double_click FOR EVENT double_click OF cl_gui_alv_grid
+*        IMPORTING e_row e_column es_row_no,
+
+      hotspot_click
+                    FOR EVENT hotspot_click OF cl_gui_alv_grid
+        IMPORTING e_row_id
+                    e_column_id
+                    es_row_no,
+
+      top_of_page FOR EVENT top_of_page OF cl_gui_alv_grid
+        IMPORTING e_dyndoc_id,
+
+      top_of_page_300 FOR EVENT top_of_page OF cl_gui_alv_grid
+        IMPORTING e_dyndoc_id.
+
+ENDCLASS.                    "lcl_event_handler DEFINITION
+*---------------------------------------------------------------------*
+*       CLASS lcl_event_handler IMPLEMENTATION
+*---------------------------------------------------------------------*
+CLASS lcl_event_handler IMPLEMENTATION.
+  "Hotspot
+  METHOD hotspot_click.
+    PERFORM hotspot_clicked
+    USING e_row_id e_column_id
+          es_row_no.
+  ENDMETHOD.                    "hotspot_click
+  "Top of Page
+  METHOD top_of_page.
+    PERFORM event_top_of_page USING go_dyndoc_id.
+  ENDMETHOD.                            "top_of_page
+  METHOD top_of_page_300.
+    PERFORM event_top_of_page_300 USING go_dyndoc_id.
+  ENDMETHOD.                            "top_of_page
+ENDCLASS.                    "LCL_EVENT_HANDLER IMPLEMENTATION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_general_methods DEFINITION
+*----------------------------------------------------------------------*
+CLASS lcl_general_methods DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS:
+      prepare_range
+        IMPORTING
+          iv_val   TYPE any
+        CHANGING
+          er_range TYPE ANY TABLE,
+
+      move_corresponding_only_init
+        IMPORTING
+          is_str_source TYPE any
+        CHANGING
+          es_str_dest   TYPE any.
+
+ENDCLASS.                    "lcl_general_methods DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_general_methods IMPLEMENTATION
+*----------------------------------------------------------------------*
+CLASS lcl_general_methods IMPLEMENTATION.
+
+  METHOD prepare_range.
+
+    DATA: BEGIN OF ls_range,
+            sign   TYPE string VALUE 'I',
+            option TYPE string VALUE 'EQ',
+            low    TYPE string,
+            high   TYPE string,
+          END OF ls_range.
+
+    DATA: lt_range    LIKE TABLE OF ls_range,
+          lv_tmiv_val TYPE string.
+
+    CHECK iv_val IS NOT INITIAL.
+
+    FIELD-SYMBOLS: <tab>    TYPE table,
+                   <line>   TYPE any,
+                   <sign>   TYPE any,
+                   <option> TYPE any,
+                   <low>    TYPE any,
+                   <high>   TYPE any.
+
+    lv_tmiv_val = iv_val.
+
+    IF lv_tmiv_val CA '*'.
+      ls_range-option = 'CP'.
+    ELSE.
+      ls_range-option = 'EQ'.
+    ENDIF.
+
+    ls_range-low = iv_val.
+    DATA: gw_line         TYPE REF TO data.
+    ASSIGN er_range TO <tab>.
+
+    CHECK <tab> IS ASSIGNED.
+
+    CREATE DATA gw_line LIKE LINE OF <tab>.
+
+    ASSIGN gw_line->*  TO <line>.
+    CHECK <line> IS ASSIGNED.
+    ASSIGN COMPONENT 'LOW' OF STRUCTURE <line> TO <low>.
+    ASSIGN COMPONENT 'HIGH' OF STRUCTURE <line> TO <high>.
+    ASSIGN COMPONENT 'SIGN' OF STRUCTURE <line> TO <sign>.
+    ASSIGN COMPONENT 'OPTION' OF STRUCTURE <line> TO <option>.
+
+    IF <low> IS ASSIGNED.
+      MOVE ls_range-low  TO <low>.
+    ENDIF.
+    IF <high> IS ASSIGNED.
+      MOVE ls_range-high  TO <high>.
+    ENDIF.
+    IF <sign> IS ASSIGNED.
+      MOVE ls_range-sign  TO <sign>.
+    ENDIF.
+    IF <option> IS ASSIGNED.
+      MOVE ls_range-option TO <option>.
+    ENDIF.
+    IF <line> IS NOT INITIAL.
+      APPEND <line> TO <tab>.
+    ENDIF.
+
+  ENDMETHOD.                    "prepare_range
+
+  METHOD move_corresponding_only_init.
+
+    DATA: lr_rcl_abap_structdescr TYPE REF TO cl_abap_structdescr.
+
+    lr_rcl_abap_structdescr ?= cl_abap_typedescr=>describe_by_data( is_str_source ).
+    LOOP AT lr_rcl_abap_structdescr->components ASSIGNING FIELD-SYMBOL(<fs_str_component>).
+      ASSIGN COMPONENT <fs_str_component>-name OF STRUCTURE es_str_dest TO FIELD-SYMBOL(<fs_dest_field>).
+      IF sy-subrc = 0.
+        ASSIGN COMPONENT <fs_str_component>-name OF STRUCTURE is_str_source TO FIELD-SYMBOL(<fs_source_field>).
+        IF <fs_source_field> IS ASSIGNED AND <fs_dest_field> IS INITIAL.
+          <fs_dest_field> = <fs_source_field>.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.                    "move_corresponding_ignore_init
+
+ENDCLASS.                    "lcl_general_methods IMPLEMENTATION
+
+*&---------------------------------------------------------------------*
+*&      Form  INITIALIZATION
+*&---------------------------------------------------------------------*
+FORM initialization.
+
+  CLEAR: p_bukrs,
+         s_belnr,
+         s_gjahr,
+         s_blart,
+         s_bldat,
+         s_budat,
+         s_monat,
+         s_usnam,
+         gt_alv,
+         gt_alv_200,
+         gt_alv_300.
+
+  CREATE OBJECT lo_aos_cockpit_class.
+
+  CREATE OBJECT go_gos
+    EXPORTING
+      ip_no_commit = 'R'
+    EXCEPTIONS
+      OTHERS       = 1.
+
+ENDFORM.
+
+FORM create_containers.
+
+  "CREATE OBJECT mo_tree.
+
+*   Main custom container
+  CREATE OBJECT mo_main_container EXPORTING container_name = 'MAIN_CONTAINER'.
+
+*     Main splitter (vertical and movable)
+  CREATE OBJECT mo_main_splitter
+    EXPORTING
+      parent  = mo_main_container
+      rows    = 1
+      columns = 2.
+
+  mo_main_splitter->set_border( EXPORTING border = cl_gui_cfw=>false ).
+  mo_main_splitter->set_column_width( EXPORTING id = 1 width = 18 ).
+
+*     Containers the left and right areas
+  mo_container_left  = mo_main_splitter->get_container( row = 1 column = 1 ).
+  mo_container_right = mo_main_splitter->get_container( row = 1 column = 2 ).
+
+*     Splitter on the right area (horizontal and not movable)
+  CREATE OBJECT mo_splitter_right EXPORTING parent = mo_container_right rows = 2 columns = 1.
+  mo_splitter_right->set_border( EXPORTING border = cl_gui_cfw=>false ).
+  mo_splitter_right->set_row_mode( EXPORTING mode = mo_splitter_right->mode_absolute ).
+  mo_splitter_right->set_row_height( EXPORTING id = 1 height = 32 ).
+  mo_splitter_right->set_row_sash( EXPORTING id = 1
+                                         type = cl_gui_splitter_container=>type_movable
+                                         value = cl_gui_splitter_container=>false ).
+
+*   Keep original row height for later
+  mo_splitter_right->get_row_height(
+    EXPORTING id = 2
+    IMPORTING result = mv_height_sel_overview ).
+
+ENDFORM.
+
+
+*FORM get_data.
+*
+*  DATA: lt_result_overview  TYPE zaos_result_overview_tab,
+*        ls_result_overview  TYPE zaos_result_overview,
+*        lv_selected_process TYPE zaos_process,
+*        lv_initial_call     TYPE abap_bool,
+*        ls_selected_node    TYPE lvc_s_nkey,
+*        lv_node_key         TYPE lvc_nkey,
+*        lv_last_key         TYPE lvc_nkey,
+*        lt_node_keys        TYPE TABLE OF lvc_nkey,
+*        ls_node             TYPE lvc_s_layn,
+*        l_node_text         TYPE lvc_value,
+*        lt_item_layout      TYPE lvc_t_layi,
+*        ls_item_layout      TYPE lvc_s_layi,
+*        ls_tree_hier_e      TYPE zaos_sel_overview_tree_tab,
+*        lv_country          TYPE landx,
+*        lt_events           TYPE cntl_simple_events,
+*        l_event             TYPE cntl_simple_event,
+*        mo_cockpit_class    TYPE REF TO zaos_cockpit_class.
+*
+*  DATA: ls_tree_hier TYPE zaos_sel_overview_tree,
+*        lt_tree_hier TYPE TABLE OF zaos_sel_overview_tree,
+*        lv_lines     TYPE i,
+*        lt_alv       TYPE ty_alv_t.
+*
+*  FIELD-SYMBOLS <fs_tree_hier> TYPE zaos_sel_overview_tree.
+*
+*  IF lt_alv IS NOT INITIAL.
+*    DESCRIBE TABLE lt_alv LINES lv_lines.
+*
+*    ls_tree_hier-land         = 'IT'.
+*    ls_tree_hier-process      = 'Outbound'.
+*    ls_tree_hier-proc_name    = 'Fatture Attive Italia'.
+*    ls_tree_hier-sum_of_edocs = lv_lines.
+*    APPEND ls_tree_hier TO lt_tree_hier.
+*
+*
+*    IF mo_tree IS BOUND.
+*      mo_tree->delete_all_nodes(
+*        EXCEPTIONS
+*          failed            = 1
+*          cntl_system_error = 2
+*          OTHERS            = 3 ).
+*      IF sy-subrc <> 0.
+*        MESSAGE w150(edocument) INTO cl_edocument=>gv_error_txt.
+*        cl_edocument=>raise_edoc_exception( ).
+*      ENDIF.
+*
+*      lv_initial_call = abap_false.
+*    ENDIF.
+*
+*    IF mo_tree IS NOT BOUND.
+*
+*      IF mo_tree IS NOT BOUND.
+*        lv_initial_call = abap_true.
+*      ELSE.
+*        mo_tree->free(
+*          EXCEPTIONS
+*            cntl_error        = 1
+*            cntl_system_error = 2
+*            OTHERS            = 3 ).
+*        IF sy-subrc <> 0.
+*          MESSAGE w150(edocument) INTO cl_edocument=>gv_error_txt.
+*          cl_edocument=>raise_edoc_exception( ).
+*        ENDIF.
+*
+*        CLEAR mo_tree.
+*      ENDIF.
+*
+*    ENDIF.
+*  ENDIF.
+*
+*  PERFORM create_tree_control USING lt_alv.
+*
+*  ls_item_layout-fieldname = mo_tree->c_hierarchy_column_name.
+*  ls_item_layout-class = cl_gui_column_tree=>item_class_link.
+*  APPEND ls_item_layout TO lt_item_layout.
+*
+*  ls_node-n_image   = 'BNONE'.
+*  ls_node-exp_image = 'BNONE'.
+*
+*  LOOP AT lt_tree_hier ASSIGNING <fs_tree_hier>.
+*
+*    l_node_text = 'Italia'.
+*
+*    mo_tree->add_node(
+*      EXPORTING
+*        i_relat_node_key = ''
+*        i_relationship   = cl_gui_column_tree=>relat_last_child
+*        i_node_text      = l_node_text
+*        is_outtab_line   = mt_tree_hier_empty
+*        is_node_layout   = ls_node
+*      IMPORTING
+*        e_new_node_key   = lv_node_key
+*      EXCEPTIONS
+*        node_not_found       = 1
+*        relat_node_not_found = 2
+*        OTHERS               = 3 ).
+*
+*    APPEND lv_node_key TO lt_node_keys.
+*
+*    l_node_text = <fs_tree_hier>-proc_name.
+*
+*    mo_tree->add_node(
+*      EXPORTING
+*        i_relat_node_key = lv_node_key
+*        i_relationship   = cl_gui_column_tree=>relat_last_child
+*        i_node_text      = l_node_text
+*        is_outtab_line   = <fs_tree_hier>
+*        is_node_layout   = ls_node
+*        it_item_layout   = lt_item_layout
+*      IMPORTING
+*        e_new_node_key   = lv_last_key
+*      EXCEPTIONS
+*        node_not_found       = 1
+*        relat_node_not_found = 2
+*        OTHERS               = 3 ).
+*
+*  ENDLOOP.
+*
+*  mo_tree->update_calculations( ).
+*  mo_tree->frontend_update( ).
+*
+** expand last level
+*  mo_tree->expand_nodes(
+*    EXPORTING
+*      it_node_key             = lt_node_keys
+*    EXCEPTIONS
+*      failed                  = 1
+*      cntl_system_error       = 2
+*      error_in_node_key_table = 3
+*      dp_error                = 4
+*      node_not_found          = 5
+*      OTHERS                  = 6 ).
+*  IF sy-subrc <> 0.
+*    MESSAGE w150(edocument) INTO cl_edocument=>gv_error_txt.
+*    cl_edocument=>raise_edoc_exception( ).
+*  ENDIF.
+*
+** optimize column-width
+*  mo_tree->column_optimize(
+*    EXCEPTIONS
+*      start_column_not_found = 1
+*      end_column_not_found   = 2
+*      OTHERS                 = 3 ).
+*  IF sy-subrc <> 0.
+*    MESSAGE w150(edocument) INTO cl_edocument=>gv_error_txt.
+*    cl_edocument=>raise_edoc_exception( ).
+*  ENDIF.
+*
+** define the events which will be passed to the backend
+*  l_event-eventid = cl_gui_column_tree=>eventid_link_click.
+*  APPEND l_event TO lt_events.
+*
+*  mo_tree->set_registered_events(
+*    EXPORTING
+*      events                    = lt_events
+*    EXCEPTIONS
+*      cntl_error                = 1
+*      cntl_system_error         = 2
+*      illegal_event_combination = 3
+*      OTHERS                    = 4 ).
+*  IF sy-subrc <> 0.
+*    MESSAGE w150(edocument) INTO cl_edocument=>gv_error_txt.
+*    cl_edocument=>raise_edoc_exception( ).
+*  ENDIF.
+*
+*
+*
+*** set handler
+**    SET HANDLER me->on_node_link_click FOR mo_tree.
+**
+*** raise link_click on selection
+**    IF ls_selected_node IS NOT INITIAL.
+**      on_node_link_click( node_key = ls_selected_node-node_key ).
+**    ENDIF.
+*
+*  CALL SCREEN 200.
+*
+*
+*ENDFORM.
+
+*FORM create_tree_control USING lt_alv TYPE ty_alv_t.
+*
+*  DATA: lt_fieldcatalog     TYPE lvc_t_fcat,
+*        ls_hierarchy_header TYPE treev_hhdr.
+*
+*  FIELD-SYMBOLS <fs_fieldcatalog> TYPE lvc_s_fcat.
+*
+** create tree control
+*  CREATE OBJECT mo_tree
+*    EXPORTING
+*      parent                      = mo_container_left
+*      node_selection_mode         = cl_gui_column_tree=>node_sel_mode_single
+*      item_selection              = 'X'
+*      no_html_header              = 'X'
+*      no_toolbar                  = 'X'
+*    EXCEPTIONS
+*      cntl_error                  = 1
+*      cntl_system_error           = 2
+*      create_error                = 3
+*      lifetime_error              = 4
+*      illegal_node_selection_mode = 5
+*      failed                      = 6
+*      illegal_column_name         = 7.
+*  IF sy-subrc <> 0.
+*
+*  ENDIF.
+*
+** build fieldcatalog
+*  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+*    EXPORTING
+*      i_structure_name       = 'ZAOS_SEL_OVERVIEW_TREE'
+*    CHANGING
+*      ct_fieldcat            = lt_fieldcatalog
+*    EXCEPTIONS
+*      inconsistent_interface = 1
+*      program_error          = 2
+*      OTHERS                 = 3.
+*  IF sy-subrc <> 0.
+*
+*  ENDIF.
+*
+*  LOOP AT lt_fieldcatalog ASSIGNING <fs_fieldcatalog>.
+*    CASE <fs_fieldcatalog>-fieldname.
+*      WHEN 'TREE_KEY' OR 'LAND' OR 'PROCESS' OR 'PROC_NAME'.
+*        <fs_fieldcatalog>-no_out = 'X'.
+*      WHEN 'SUM_OF_EDOCS'.
+*        IF lt_alv IS INITIAL.
+*          <fs_fieldcatalog>-no_out = 'X'.
+*        ELSE.
+*          <fs_fieldcatalog>-do_sum  = 'X'.
+*          <fs_fieldcatalog>-h_ftype = 'SUM'.
+*        ENDIF.
+*    ENDCASE.
+*  ENDLOOP.
+*
+** set hierarchy header
+*  ls_hierarchy_header-heading = 'Result Overview'.
+*  ls_hierarchy_header-tooltip = 'Result Overview'.
+*  ls_hierarchy_header-width = '30'.
+*  ls_hierarchy_header-width_pix = ''.
+*
+** create hierarchy
+*  mo_tree->set_table_for_first_display(
+*    EXPORTING
+*      is_hierarchy_header = ls_hierarchy_header
+*      i_structure_name    = 'ZAOS_SEL_OVERVIEW_TREE'
+*    CHANGING
+*      it_outtab           = mt_tree_hier_empty
+*      it_fieldcatalog     = lt_fieldcatalog ).
+*
+*ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  AUTHORITY_CHECKS
+*&---------------------------------------------------------------------*
+FORM authority_checks .
+
+  CLEAR: lr_bukrs,
+         lr_blart,
+         lr_archd.
+
+  "lr_bukrs[] = s_bukrs[].
+  lr_blart[] = s_blart[].
+  lr_archd[] = s_archd[].
+
+  CALL METHOD lo_aos_cockpit_class->authority_checks
+    EXPORTING
+      p_bukrs = p_bukrs
+      s_blart = lr_blart
+      s_archd = lr_archd.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+FORM get_data.
+
+  DATA: ls_alv      TYPE ty_alv,
+        lr_allowed  TYPE RANGE OF zaos_data-allowed,
+        ls_allowed  LIKE LINE OF lr_allowed,
+        lr_archived TYPE RANGE OF zaos_data-conservato,
+        ls_archived LIKE LINE OF lr_archived,
+        lr_meta     TYPE RANGE OF zaos_data-metadata_incomplete,
+        ls_meta     LIKE LINE OF lr_meta,
+        lr_file     TYPE RANGE OF zaos_data-no_file,
+        ls_file     LIKE LINE OF lr_file.
+
+  CLEAR: ls_alv,
+         lr_allowed,
+         ls_allowed,
+         lr_archived,
+         ls_archived,
+         lr_meta,
+         ls_meta,
+         lr_file,
+         ls_file.
+
+  IF p_all IS NOT INITIAL.
+    CLEAR: lr_allowed,
+           ls_allowed,
+           lr_archived,
+           ls_archived,
+           lr_meta,
+           ls_meta,
+           lr_file,
+           ls_file.
+  ENDIF.
+  IF p_ready IS NOT INITIAL.
+    ls_allowed-option = 'EQ'.
+    ls_allowed-sign   = 'I'.
+    ls_allowed-low    = 'X'.
+    APPEND ls_allowed TO lr_allowed.
+  ENDIF.
+  IF p_arch IS NOT INITIAL.
+    ls_archived-option = 'EQ'.
+    ls_archived-sign   = 'I'.
+    ls_archived-low    = 'X'.
+    APPEND ls_archived TO lr_archived.
+  ENDIF.
+  IF p_err IS NOT INITIAL.
+    ls_meta-option = 'EQ'.
+    ls_meta-sign   = 'I'.
+    ls_meta-low    = 'X'.
+    APPEND ls_meta TO lr_meta.
+    ls_file-option = 'EQ'.
+    ls_file-sign   = 'I'.
+    ls_file-low    = 'X'.
+    APPEND ls_file TO lr_file.
+  ENDIF.
+
+  IF p_radio3 IS INITIAL.
+
+    SELECT *
+      FROM zaos_data
+      INTO TABLE @DATA(lt_zaos_data)
+      WHERE bukrs = @p_bukrs
+        AND belnr               IN @s_belnr
+        AND gjahr               IN @s_gjahr
+        AND vbeln               IN @s_vbeln
+        AND blart               IN @s_blart
+        AND monat               IN @s_monat
+        AND bldat               IN @s_bldat
+        AND budat               IN @s_budat
+        AND vbeln               IN @s_vbeln
+        AND kunnr               IN @s_kunnr
+        AND lifnr               IN @s_lifnr
+        AND usnam               IN @s_usnam
+        AND zarchiving_doctype  IN @s_archd
+        AND allowed             IN @lr_allowed
+        AND conservato          IN @lr_archived
+        AND ( metadata_incomplete IN @lr_meta OR no_file IN @lr_file ).
+
+*    SELECT *
+*      FROM zaos_all_gos
+*      INTO TABLE @DATA(lt_zaos_all_gos)
+*      WHERE bukrs = @p_bukrs
+*        AND belnr IN @s_belnr
+*        AND gjahr IN @s_gjahr
+*        AND zarchiving_doctype IN @s_archd.
+
+    IF lt_zaos_data IS NOT INITIAL.
+      LOOP AT lt_zaos_data ASSIGNING FIELD-SYMBOL(<fs_zoas_data>).
+        IF <fs_zoas_data> IS ASSIGNED.
+
+          CLEAR: ls_alv.
+          MOVE-CORRESPONDING <fs_zoas_data> TO ls_alv.
+          APPEND ls_alv TO gt_alv.
+
+*          READ TABLE lt_zaos_all_gos ASSIGNING FIELD-SYMBOL(<fs_all_gos>)
+*            WITH KEY bukrs = <fs_zoas_data>-bukrs
+*                     belnr = <fs_zoas_data>-belnr
+*                     gjahr = <fs_zoas_data>-gjahr.
+*          IF sy-subrc = 0.
+*            CLEAR: ls_alv.
+*            MOVE-CORRESPONDING <fs_all_gos> TO ls_alv.
+*            ls_alv-allegato = 'X'.
+*            APPEND ls_alv TO gt_alv.
+*          ENDIF.
+
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+  ELSE.
+
+    SELECT *
+      FROM zaos_data
+      INTO TABLE @lt_zaos_data
+      WHERE error = 'X'.
+    IF sy-subrc = 0.
+      LOOP AT lt_zaos_data ASSIGNING <fs_zoas_data>.
+        IF <fs_zoas_data> IS ASSIGNED.
+          CLEAR: ls_alv.
+          MOVE-CORRESPONDING <fs_zoas_data> TO ls_alv.
+          APPEND ls_alv TO gt_alv.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY
+*&---------------------------------------------------------------------*
+FORM display .
+
+  CALL SCREEN 100.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SWITCH_EDIT_MODE
+*&---------------------------------------------------------------------*
+FORM switch_edit_mode.
+
+  IF go_grid_200->is_ready_for_input( ) EQ 0.
+    CALL METHOD go_grid_200->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 1.
+  ELSE.
+    CALL METHOD go_grid_200->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 0.
+  ENDIF.
+
+ENDFORM.                               " SWITCH_EDIT_MODE
+
+*&---------------------------------------------------------------------*
+*& Form SAVE
+*&---------------------------------------------------------------------*
+FORM save_200 .
+
+  DATA: ls_zaos_metadata TYPE zaos_metadata,
+        lv_x             TYPE char1 VALUE 'X'.
+
+  CALL METHOD go_grid_200->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CLEAR: ls_zaos_metadata.
+
+  CHECK gt_alv_200 IS NOT INITIAL.
+
+  SELECT SINGLE *
+    FROM zaos_metadata
+    INTO ls_zaos_metadata
+    WHERE bukrs          = gv_metadata_bukrs
+      AND numero_fattura = gv_metadata_belnr
+      AND gjahr          = gv_metadata_gjahr.
+
+  LOOP AT gt_alv_200 ASSIGNING FIELD-SYMBOL(<fs_alv_200>).
+    IF <fs_alv_200> IS ASSIGNED.
+      CASE <fs_alv_200>-field.
+*        WHEN 'NUMERO_FATTURA'.
+*          ls_zaos_metadata-numero_fattura       = <fs_alv_200>-value.
+*        WHEN 'DATA_FATTURA'.
+*          ls_zaos_metadata-data_fattura         = <fs_alv_200>-value.
+        WHEN 'SEZIONALE_IVA'.
+          ls_zaos_metadata-sezionale_iva        = <fs_alv_200>-value.
+        WHEN 'ANNO_IVA'.
+          ls_zaos_metadata-anno_iva             = <fs_alv_200>-value.
+        WHEN 'OGGETTO'.
+          ls_zaos_metadata-oggetto              = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_NOME'.
+          ls_zaos_metadata-destinatario_nome    = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_COGNOME'.
+          ls_zaos_metadata-destinatario_cognome = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_CODFISC'.
+          ls_zaos_metadata-destinatario_codfisc = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_RAGSOC'.
+          ls_zaos_metadata-destinatario_ragsoc  = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_PIVA'.
+          ls_zaos_metadata-destinatario_piva    = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_IPA'.
+          ls_zaos_metadata-destinatario_ipa     = <fs_alv_200>-value.
+        WHEN 'DESTINATARIO_CODUFF'.
+          ls_zaos_metadata-destinatario_coduff  = <fs_alv_200>-value.
+        WHEN 'MITTENTE_NOME'.
+          ls_zaos_metadata-mittente_nome        = <fs_alv_200>-value.
+        WHEN 'MITTENTE_COGNOME'.
+          ls_zaos_metadata-mittente_cognome     = <fs_alv_200>-value.
+        WHEN 'MITTENTE_CODFISC'.
+          ls_zaos_metadata-mittente_codfisc     = <fs_alv_200>-value.
+        WHEN 'MITTENTE_RAGSOC'.
+          ls_zaos_metadata-mittente_ragsoc      = <fs_alv_200>-value.
+        WHEN 'MITTENTE_PIVA'.
+          ls_zaos_metadata-mittente_piva        = <fs_alv_200>-value.
+        WHEN 'MITTENTE_IPA'.
+          ls_zaos_metadata-mittente_ipa         = <fs_alv_200>-value.
+        WHEN 'MITTENTE_CODUFF'.
+          ls_zaos_metadata-mittente_coduff      = <fs_alv_200>-value.
+      ENDCASE.
+    ENDIF.
+  ENDLOOP.
+
+  IF ls_zaos_metadata IS NOT INITIAL.
+    MODIFY zaos_metadata FROM ls_zaos_metadata.
+    COMMIT WORK.
+    LEAVE TO SCREEN 0.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  EDIT_METADATA
+*&---------------------------------------------------------------------*
+FORM edit_metadata .
+
+  DATA: lt_index_rows TYPE lvc_t_row,
+        lt_row_no     TYPE lvc_t_roid,
+        lv_lines      TYPE i,
+        lv_x          TYPE char1 VALUE 'X',
+        lv_answer     TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines,
+         gv_edit,
+         lv_answer.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+
+  IF lv_lines > 1.
+    MESSAGE w004(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ELSE.
+
+    CLEAR: gt_alv_200.
+
+    READ TABLE lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>)
+      INDEX 1.
+    IF <fs_index> IS ASSIGNED.
+      READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+        INDEX <fs_index>-index.
+      IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL AND <fs_alv>-allowed IS INITIAL.
+
+        IF <fs_alv>-allegato IS NOT INITIAL.
+          MESSAGE w009(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ELSE.
+
+          PERFORM fill_vertical_alv USING <fs_alv>
+                                 CHANGING gt_alv_200.
+
+          CLEAR: gv_metadata_bukrs,
+                 gv_metadata_belnr,
+                 gv_metadata_gjahr,
+                 gv_metadata_bldat.
+
+          gv_metadata_bukrs = <fs_alv>-bukrs.
+          gv_metadata_belnr = <fs_alv>-belnr.
+          gv_metadata_gjahr = <fs_alv>-gjahr.
+          gv_metadata_bldat = <fs_alv>-bldat.
+
+          CHECK gt_alv_200 IS NOT INITIAL.
+
+          gv_edit = 'X'.
+
+          CALL SCREEN 200 STARTING AT 1 1.
+
+          IF <fs_alv>-metadata_incomplete IS NOT INITIAL.
+            CALL FUNCTION 'POPUP_TO_CONFIRM'
+              EXPORTING
+                titlebar       = 'Metadata'
+                text_question  = 'Confirm Metadata completion?'
+                text_button_1  = 'Yes'
+*               ICON_BUTTON_1  = ' '
+                text_button_2  = 'No'
+*               ICON_BUTTON_2  = ' '
+              IMPORTING
+                answer         = lv_answer
+              EXCEPTIONS
+                text_not_found = 1
+                OTHERS         = 2.
+            IF lv_answer = '1'.
+              CLEAR: <fs_alv>-metadata_incomplete.
+            ELSE.
+              <fs_alv>-metadata_incomplete = 'X'.
+            ENDIF.
+          ENDIF.
+
+        ENDIF.
+
+      ELSE.
+
+        IF <fs_alv>-allegato IS NOT INITIAL.
+          MESSAGE w009(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ELSE.
+
+          PERFORM fill_vertical_alv USING <fs_alv>
+                                 CHANGING gt_alv_200.
+
+          CLEAR: gv_metadata_belnr,
+                 gv_metadata_bldat.
+
+          gv_metadata_belnr = <fs_alv>-belnr.
+          gv_metadata_bldat = <fs_alv>-bldat.
+
+          CHECK gt_alv_200 IS NOT INITIAL.
+
+          gv_edit = space.
+
+          CALL SCREEN 200 STARTING AT 1 1.
+
+        ENDIF.
+
+      ENDIF.
+    ENDIF.
+
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_METADATA_NOTE
+*&---------------------------------------------------------------------*
+FORM add_metadata_note .
+
+  DATA: lt_index_rows TYPE lvc_t_row,
+        lt_row_no     TYPE lvc_t_roid,
+        lv_lines      TYPE i,
+        lv_x          TYPE char1 VALUE 'X'.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines > 1.
+    MESSAGE w004(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ELSEIF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ELSE.
+
+    READ TABLE lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>)
+      INDEX 1.
+    IF <fs_index> IS ASSIGNED.
+      READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+        INDEX <fs_index>-index.
+      IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+
+        PERFORM popup_text_editor USING <fs_alv>.
+
+      ELSE.
+        MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+      ENDIF.
+    ENDIF.
+
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ALLOW_DOCUMENTS_FOR_ARCHIVING
+*&---------------------------------------------------------------------*
+FORM allow_documents_for_archiving .
+
+  DATA: lt_index_rows TYPE lvc_t_row,
+        lt_row_no     TYPE lvc_t_roid,
+        lv_lines      TYPE i,
+        lv_x          TYPE char1 VALUE 'X',
+        ls_zaos_data  TYPE zaos_data,
+        lv_answer     TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+*  CALL FUNCTION 'POPUP_TO_CONFIRM'
+*    EXPORTING
+*      titlebar       = 'Authorize'
+*      text_question  = 'Authorize selected documents?'
+*      text_button_1  = 'Yes'
+**     ICON_BUTTON_1  = ' '
+*      text_button_2  = 'No'
+**     ICON_BUTTON_2  = ' '
+*    IMPORTING
+*      answer         = lv_answer
+*    EXCEPTIONS
+*      text_not_found = 1
+*      OTHERS         = 2.
+*  IF lv_answer = '1'.
+*
+*    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+*      IF <fs_index> IS ASSIGNED.
+*        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+*          INDEX <fs_index>-index.
+*        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+*          CLEAR: ls_zaos_data.
+*          <fs_alv>-allowed = 'X'.
+*          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+*          MODIFY zaos_data FROM ls_zaos_data.
+*        ENDIF.
+*      ENDIF.
+*    ENDLOOP.
+*
+*    MESSAGE i012(zaos_message).
+*
+*  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Authorize'
+      text_question  = 'Authorize selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+
+        IF <fs_alv>-metadata_incomplete IS NOT INITIAL OR <fs_alv>-no_file IS NOT INITIAL.
+          MESSAGE w029(zaos_message) WITH <fs_alv>-belnr.
+        ENDIF.
+
+        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL AND <fs_alv>-error IS INITIAL.
+
+          CLEAR: ls_zaos_data.
+          <fs_alv>-allowed = 'X'.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+          MODIFY zaos_data FROM ls_zaos_data.
+
+
+        ELSEIF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL AND <fs_alv>-error IS NOT INITIAL.
+          CONCATENATE 'Confirm error resolution for document' <fs_alv>-belnr 'and authorize again?' INTO DATA(lv_question) SEPARATED BY space.
+          CALL FUNCTION 'POPUP_TO_CONFIRM'
+            EXPORTING
+              titlebar       = 'Authorize with error'
+              text_question  = lv_question
+              text_button_1  = 'Yes'
+*             ICON_BUTTON_1  = ' '
+              text_button_2  = 'No'
+*             ICON_BUTTON_2  = ' '
+            IMPORTING
+              answer         = lv_answer
+            EXCEPTIONS
+              text_not_found = 1
+              OTHERS         = 2.
+          IF lv_answer = '1'.
+            CLEAR: ls_zaos_data.
+            <fs_alv>-allowed = 'X'.
+            CLEAR: <fs_alv>-error, <fs_alv>-error_code.
+            MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+            MODIFY zaos_data FROM ls_zaos_data.
+          ENDIF.
+        ELSE.
+          MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    MESSAGE i012(zaos_message).
+
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CONFIRM_MANUAL_UPLOAD
+*&---------------------------------------------------------------------*
+FORM confirm_manual_upload .
+
+  DATA: lt_index_rows  TYPE lvc_t_row,
+        lt_row_no      TYPE lvc_t_roid,
+        lv_lines       TYPE i,
+        lv_x           TYPE char1 VALUE 'X',
+        ls_zaos_data   TYPE zaos_data,
+        lv_answer      TYPE c,
+        lv_title       TYPE string,
+        lv_text_object TYPE dokhl-object.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines,
+         lv_title,
+         lv_text_object.
+
+  SELECT SINGLE *
+    FROM zaos_auth_user
+    INTO @DATA(ls_auth_user)
+    WHERE uname    = @sy-uname
+      AND sysid      = @sy-sysid
+      AND authorized = 'X'.
+  IF sy-subrc NE 0.
+    MESSAGE w030(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  lv_title = 'Confirmation of Manual Modification Information'.
+  lv_text_object = 'ZAOS_003'.
+
+  CALL FUNCTION 'POPUP_DISPLAY_TEXT'
+    EXPORTING
+      language       = sy-langu
+      popup_title    = lv_title
+*     START_COLUMN   = 10
+*     START_ROW      = 3
+      text_object    = lv_text_object
+*     HELP_MODAL     = 'X'
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+
+  IF sy-ucomm NE 'DBAC'.
+    EXIT.
+  ENDIF.
+
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Manual Upload'
+      text_question  = 'Confirm manual upload for selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+        IF <fs_alv> IS ASSIGNED.
+
+          CLEAR: ls_zaos_data.
+          <fs_alv>-allowed = 'X'.
+          CLEAR: <fs_alv>-error.
+          <fs_alv>-status = 'CONSERVAZIONEFFETTUATA'.
+          <fs_alv>-conservato = 'X'.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+          MODIFY zaos_data FROM ls_zaos_data.
+
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    MESSAGE i028(zaos_message).
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CONFIRM_MANUAL_UPLOAD
+*&---------------------------------------------------------------------*
+FORM confirm_manual_upload_300 .
+
+  DATA: lt_index_rows    TYPE lvc_t_row,
+        lt_row_no        TYPE lvc_t_roid,
+        lv_lines         TYPE i,
+        lv_x             TYPE char1 VALUE 'X',
+        ls_zaos_registri TYPE zaos_registri,
+        lv_answer        TYPE c,
+        lv_title         TYPE string,
+        lv_text_object   TYPE dokhl-object.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines,
+         lv_title,
+         lv_text_object.
+
+  SELECT SINGLE *
+    FROM zaos_auth_user
+    INTO @DATA(ls_auth_user)
+    WHERE uname    = @sy-uname
+    AND authorized = 'X'.
+  IF sy-subrc NE 0.
+    MESSAGE w030(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  CALL METHOD go_grid_300->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_300->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  lv_title = 'Confirmation of Manual Modification Information'.
+  lv_text_object = 'ZAOS_003'.
+
+  CALL FUNCTION 'POPUP_DISPLAY_TEXT'
+    EXPORTING
+      language       = sy-langu
+      popup_title    = lv_title
+*     START_COLUMN   = 10
+*     START_ROW      = 3
+      text_object    = lv_text_object
+*     HELP_MODAL     = 'X'
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+
+  IF sy-ucomm NE 'DBAC'.
+    EXIT.
+  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Manual Upload'
+      text_question  = 'Confirm manual upload for selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv_300 ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+        IF <fs_alv> IS ASSIGNED.
+
+          CLEAR: ls_zaos_registri.
+          <fs_alv>-allowed = 'X'.
+          CLEAR: <fs_alv>-error.
+          <fs_alv>-status = 'CONSERVAZIONEFFETTUATA'.
+          <fs_alv>-conservato = 'X'.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_registri.
+          MODIFY zaos_registri FROM ls_zaos_registri.
+
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    MESSAGE i028(zaos_message).
+  ENDIF.
+
+  PERFORM refresh_icons_300.
+
+  CALL METHOD go_grid_300->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ALLOW_DOCUMENTS_FOR_ARCHIVING
+*&---------------------------------------------------------------------*
+FORM allow_documents_300 .
+
+  DATA: lt_index_rows    TYPE lvc_t_row,
+        lt_row_no        TYPE lvc_t_roid,
+        lv_lines         TYPE i,
+        lv_x             TYPE char1 VALUE 'X',
+        ls_zaos_registri TYPE zaos_registri,
+        lv_answer        TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_300->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_300->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Authorize'
+      text_question  = 'Authorize selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv_300 ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+
+          CLEAR: ls_zaos_registri.
+          <fs_alv>-allowed = 'X'.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_registri.
+          MODIFY zaos_registri FROM ls_zaos_registri.
+
+        ELSE.
+          MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    MESSAGE i012(zaos_message).
+  ENDIF.
+
+  PERFORM refresh_icons_300.
+
+  CALL METHOD go_grid_300->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  REVOKE_DOCUMENTS_FOR_ARCHIVING
+*&---------------------------------------------------------------------*
+FORM revoke_documents_for_archiving .
+
+  DATA: lt_index_rows TYPE lvc_t_row,
+        lt_row_no     TYPE lvc_t_roid,
+        lv_lines      TYPE i,
+        lv_x          TYPE char1 VALUE 'X',
+        ls_zaos_data  TYPE zaos_data,
+        lv_answer     TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+*  CALL FUNCTION 'POPUP_TO_CONFIRM'
+*    EXPORTING
+*      titlebar       = 'Revoke Authorization'
+*      text_question  = 'Revoke authorization for selected documents?'
+*      text_button_1  = 'Yes'
+**     ICON_BUTTON_1  = ' '
+*      text_button_2  = 'No'
+**     ICON_BUTTON_2  = ' '
+*    IMPORTING
+*      answer         = lv_answer
+*    EXCEPTIONS
+*      text_not_found = 1
+*      OTHERS         = 2.
+*  IF lv_answer = '1'.
+*
+*    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+*      IF <fs_index> IS ASSIGNED.
+*        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+*          INDEX <fs_index>-index.
+*        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+*          CLEAR: ls_zaos_data.
+*          <fs_alv>-allowed = space.
+*          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+*          MODIFY zaos_data FROM ls_zaos_data.
+*        ELSE.
+*          MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+*        ENDIF.
+*      ENDIF.
+*    ENDLOOP.
+*
+*    MESSAGE i013(zaos_message).
+*
+*  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Revoke Authorization'
+      text_question  = 'Revoke authorization for selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+
+          CLEAR: ls_zaos_data.
+          <fs_alv>-allowed = space.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+          MODIFY zaos_data FROM ls_zaos_data.
+
+        ELSE.
+          MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    MESSAGE i013(zaos_message).
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  REVOKE_DOCUMENTS_FOR_ARCHIVING
+*&---------------------------------------------------------------------*
+FORM revoke_documents_300 .
+
+  DATA: lt_index_rows    TYPE lvc_t_row,
+        lt_row_no        TYPE lvc_t_roid,
+        lv_lines         TYPE i,
+        lv_x             TYPE char1 VALUE 'X',
+        ls_zaos_registri TYPE zaos_registri,
+        lv_answer        TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_300->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_300->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Revoke Authorization'
+      text_question  = 'Revoke authorization for selected documents?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv_300 ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+        IF <fs_alv> IS ASSIGNED AND <fs_alv>-change_lock IS INITIAL.
+
+          CLEAR: ls_zaos_registri.
+          <fs_alv>-allowed = space.
+          MOVE-CORRESPONDING <fs_alv> TO ls_zaos_registri.
+          MODIFY zaos_registri FROM ls_zaos_registri.
+
+        ELSE.
+          MESSAGE w025(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    MESSAGE i013(zaos_message).
+  ENDIF.
+
+  PERFORM refresh_icons_300.
+
+  CALL METHOD go_grid_300->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  POPUP_TEXT_EDITOR
+*&---------------------------------------------------------------------*
+FORM popup_text_editor USING ps_alv TYPE ty_alv.
+
+
+  DATA: lt_note           TYPE TABLE OF txw_note,
+        lv_string         TYPE string,
+        lt_split          TYPE TABLE OF char72,
+        lt_char128        TYPE TABLE OF char72,
+        lv_wa_str         TYPE string,
+        lv_len            TYPE int4,
+        lr_split          TYPE REF TO char72,
+        lv_note_documento TYPE zaos_metadata-note_documento.
+
+  CLEAR: lt_note.
+
+  SELECT SINGLE *
+    FROM zaos_metadata
+    INTO @DATA(ls_zaos_metadata)
+    WHERE numero_fattura = @ps_alv-belnr.
+  IF sy-subrc = 0.
+    lv_string =  ls_zaos_metadata-note_documento.
+  ENDIF.
+
+  SPLIT lv_string AT space INTO TABLE lt_split.
+
+  LOOP AT lt_split REFERENCE INTO lr_split.
+    lv_len = strlen( lv_wa_str ) + strlen( lr_split->* ).
+    IF lv_len LT 72.
+      CONCATENATE lv_wa_str lr_split->* INTO lv_wa_str SEPARATED BY space.
+    ELSE.
+      APPEND lv_wa_str TO lt_char128.
+      lv_wa_str = lr_split->*.
+    ENDIF.
+  ENDLOOP.
+  APPEND lv_wa_str TO lt_note.
+
+  CALL FUNCTION 'TXW_TEXTNOTE_EDIT'
+    TABLES
+      t_txwnote = lt_note.
+
+  IF sy-ucomm = 'CONT'.
+    CLEAR: lv_note_documento.
+
+    LOOP AT lt_note ASSIGNING FIELD-SYMBOL(<fs_note>).
+      IF <fs_note> IS ASSIGNED.
+        CONCATENATE lv_note_documento <fs_note>-line INTO lv_note_documento
+          SEPARATED BY space.
+      ENDIF.
+    ENDLOOP.
+
+    SHIFT lv_note_documento LEFT DELETING LEADING space.
+
+    IF lv_note_documento <> ls_zaos_metadata-note_documento.
+      ls_zaos_metadata-note_documento = lv_note_documento.
+      MODIFY zaos_metadata FROM ls_zaos_metadata.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  EVENT_TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+FORM event_top_of_page USING go_dyndoc_id TYPE REF TO cl_dd_document.
+
+  DATA: lv_text(255)  TYPE c,
+        lv_lines      TYPE i,
+        lv_lines_c(6) TYPE c,
+        lv_lines_e(6) TYPE c.
+
+  CLEAR: lv_text,
+         lv_lines,
+         lv_lines_c.
+
+  DESCRIBE TABLE gt_alv LINES lv_lines.
+
+  CALL METHOD go_dyndoc_id->add_text
+    EXPORTING
+      text      = 'Cockpit AOS'
+      sap_style = cl_dd_area=>heading.
+
+  CALL METHOD go_dyndoc_id->new_line.
+
+  CONCATENATE 'User ID :' sy-uname INTO lv_text SEPARATED BY space.
+  PERFORM add_text USING lv_text.
+  CALL METHOD go_dyndoc_id->new_line.
+
+  CLEAR : lv_text.
+  lv_lines_c = lv_lines.
+  CONCATENATE 'No of records :' lv_lines_c INTO lv_text SEPARATED BY space.
+  PERFORM add_text USING lv_text.
+  CALL METHOD go_dyndoc_id->new_line.
+
+  CLEAR: lv_lines.
+  LOOP AT gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED.
+      IF <fs_alv>-error IS NOT INITIAL OR <fs_alv>-metadata_incomplete IS NOT INITIAL OR <fs_alv>-no_file IS NOT INITIAL.
+        lv_lines = lv_lines + 1.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  CLEAR : lv_text.
+  lv_lines_e = lv_lines.
+  CONCATENATE 'No of errors :' lv_lines_e INTO lv_text SEPARATED BY space.
+  PERFORM add_text USING lv_text.
+  CALL METHOD go_dyndoc_id->new_line.
+
+  CLEAR : lv_text.
+  WRITE sy-datum TO lv_text.
+  CONCATENATE 'Date :' lv_text INTO lv_text SEPARATED BY space.
+  PERFORM add_text USING lv_text.
+  CALL METHOD go_dyndoc_id->new_line.
+
+  PERFORM html.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_TEXT
+*&---------------------------------------------------------------------*
+FORM add_text USING p_text TYPE sdydo_text_element.
+
+  CALL METHOD go_dyndoc_id->add_text
+    EXPORTING
+      text         = p_text
+      sap_emphasis = cl_dd_area=>heading.
+
+ENDFORM.                    " ADD_TEXT
+
+*&---------------------------------------------------------------------*
+*&      Form  HTML
+*&---------------------------------------------------------------------*
+FORM html.
+  DATA : dl_length        TYPE i,                           " Length
+         dl_background_id TYPE sdydo_key VALUE space. " Background_id
+
+  IF go_html_cntrl IS INITIAL.
+    CREATE OBJECT go_html_cntrl
+      EXPORTING
+        parent = go_parent_html.
+  ENDIF.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_COMMENTARY_SET'
+    EXPORTING
+      document = go_dyndoc_id
+      bottom   = space
+    IMPORTING
+      length   = dl_length.
+
+  CALL METHOD go_dyndoc_id->merge_document.
+
+  CALL METHOD go_dyndoc_id->set_document_background
+    EXPORTING
+      picture_id = dl_background_id.
+
+  go_dyndoc_id->html_control = go_html_cntrl.
+
+  CALL METHOD go_dyndoc_id->display_document
+    EXPORTING
+      reuse_control      = 'X'
+      parent             = go_parent_html
+    EXCEPTIONS
+      html_display_error = 1.
+  IF sy-subrc NE 0.
+    "MESSAGE i999 WITH 'Error in displaying top-of-page'(036).
+  ENDIF.
+
+ENDFORM.                    " HTML
+
+FORM fatel_viewer.
+
+  TYPES: BEGIN OF ty_doc_file,
+           file_raw    TYPE edocumentfile-file_raw,
+           file_name   TYPE edocumentfile-file_name,
+           create_date TYPE edocumentfile-create_date,
+         END OF ty_doc_file,
+
+         ty_doc_file_t TYPE STANDARD TABLE OF ty_doc_file.
+
+  DATA: lexc_root          TYPE REF TO cx_root,
+        lt_edocumentfile   TYPE ty_doc_file_t,
+        ls_edocumentfile   TYPE ty_doc_file,
+        lv_error           TYPE string,
+        lv_edoc_guid       TYPE edoc_guid,
+        lv_plugin_id       TYPE /opt/cpmc_plugin_id_de,
+        lcl_viewer         TYPE REF TO zcl_fatel_viewer,
+        lcl_edocument      TYPE REF TO cl_edocument,
+        lv_file_type       TYPE edoc_file_type,
+        lv_file_raw        TYPE edoc_file,
+        lv_xstring         TYPE xstring,
+        o_xstring          TYPE xstring,
+        o_lenght           TYPE i,
+        lv_length_i        TYPE i,
+        lt_binarchivobject TYPE TABLE OF tbl1024,
+        lt_index_rows      TYPE lvc_t_row,
+        lt_row_no          TYPE lvc_t_roid,
+        lv_lines           TYPE i,
+        lv_x               TYPE char1 VALUE 'X',
+        ls_zaos_data       TYPE zaos_data.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+    IF <fs_index> IS ASSIGNED.
+      READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+        INDEX <fs_index>-index.
+      IF <fs_alv> IS ASSIGNED.
+        CLEAR: ls_zaos_data.
+        MOVE-CORRESPONDING <fs_alv> TO ls_zaos_data.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  IF lv_lines > 1.
+    MESSAGE w004(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  IF ls_zaos_data-edoc_guid IS INITIAL AND ls_zaos_data-filename IS NOT INITIAL.
+    IF ls_zaos_data-filename(1) = '/'.
+      PERFORM display_pdf     USING ls_zaos_data-bukrs
+                                    ls_zaos_data-belnr
+                                    ls_zaos_data-gjahr
+                                    ls_zaos_data-filename.
+    ELSE.
+      PERFORM display_pdf_toa USING ls_zaos_data-bukrs
+                                    ls_zaos_data-belnr
+                                    ls_zaos_data-gjahr
+                                    ls_zaos_data-zarchiving_doctype
+                                    ls_zaos_data-blart
+                                    ls_zaos_data-filename.
+    ENDIF.
+    EXIT.
+  ELSEIF ls_zaos_data-no_file IS NOT INITIAL.
+    MESSAGE w010(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  TRY.
+
+*1)    RECUPERO DATI EDOCUMENT:
+      cl_edocument=>retrieve_by_edoc_guid(
+        EXPORTING iv_edoc_guid = ls_zaos_data-edoc_guid
+        RECEIVING ro_edocument = lcl_edocument ).
+
+*2)    RECUPERO XML raw e conversione:
+      IF lcl_edocument IS BOUND.
+        lcl_edocument->get_file_for_pdf(
+          IMPORTING ev_file_type = lv_file_type
+                    ev_file_raw  = lv_file_raw ).
+        IF lv_file_raw IS NOT INITIAL.
+          lv_xstring = zcl_fatel_viewer=>rawstring_to_xstring( lv_file_raw ).
+        ENDIF.
+      ENDIF.
+
+      SELECT file_raw file_name create_date
+       INTO CORRESPONDING FIELDS OF TABLE lt_edocumentfile
+       FROM edocumentfile
+       WHERE edoc_guid EQ ls_zaos_data-edoc_guid
+         AND file_type EQ 'SIGNEDDOC'.
+
+      IF sy-subrc = 0.
+        READ TABLE lt_edocumentfile INTO ls_edocumentfile INDEX 1.
+        IF lv_xstring IS INITIAL.
+          lv_xstring = zcl_fatel_viewer=>rawstring_to_xstring( ls_edocumentfile-file_raw ).
+        ENDIF.
+      ELSE.
+        MESSAGE w011(zaos_message) DISPLAY LIKE 'I'.
+        EXIT.
+      ENDIF.
+
+*3)    Asso Invoice transformation:
+      IF lv_xstring IS NOT INITIAL.
+        CREATE OBJECT lcl_viewer
+          EXPORTING
+            i_xml      = lv_xstring
+            i_filename = ls_edocumentfile-file_name.
+
+        lcl_viewer->show( ).
+
+*        CALL METHOD lcl_viewer->get_hmtl
+*          EXPORTING
+*            i_progname = lcl_viewer->cv_view_comp2
+*          IMPORTING
+*            e_lenght   = o_lenght
+*            e_xstring  = o_xstring.
+
+      ENDIF.
+
+    CATCH cx_root INTO lexc_root.
+      lv_error = lexc_root->get_text( ).
+      MESSAGE lv_error TYPE 'W' DISPLAY LIKE 'E'. EXIT.
+  ENDTRY.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ERROR_INFO
+*&---------------------------------------------------------------------*
+FORM error_info.
+
+  DATA: lt_index_rows  TYPE lvc_t_row,
+        lt_row_no      TYPE lvc_t_roid,
+        lv_lines       TYPE i,
+        lv_x           TYPE char1 VALUE 'X',
+        lv_title       TYPE string,
+        lv_text_object TYPE dokhl-object.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  DESCRIBE TABLE lt_index_rows LINES lv_lines.
+  IF lv_lines > 1.
+    MESSAGE w014(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ELSEIF lv_lines = 0.
+    MESSAGE w016(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+    IF <fs_index> IS ASSIGNED.
+      READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+        INDEX <fs_index>-index.
+      IF <fs_alv> IS ASSIGNED.
+        IF <fs_alv>-error IS INITIAL.
+          MESSAGE w015(zaos_message) DISPLAY LIKE 'E'. EXIT.
+        ELSE.
+
+          "Oggetto testo SE61, "Dialog Text" DT
+          CLEAR: lv_title, lv_text_object.
+          CONCATENATE 'Error Code :' <fs_alv>-error_code INTO lv_title SEPARATED BY space.
+          SHIFT <fs_alv>-error_code LEFT DELETING LEADING space.
+          CONCATENATE 'ZAOS_' <fs_alv>-error_code INTO lv_text_object.
+
+          CALL FUNCTION 'POPUP_DISPLAY_TEXT'
+            EXPORTING
+              language       = sy-langu
+              popup_title    = lv_title
+*             START_COLUMN   = 10
+*             START_ROW      = 3
+              text_object    = lv_text_object
+*             HELP_MODAL     = 'X'
+            EXCEPTIONS
+              text_not_found = 1
+              OTHERS         = 2.
+
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  HOTSPOT_CLICKED
+*&---------------------------------------------------------------------*
+FORM hotspot_clicked USING p_e_row_id    STRUCTURE lvc_s_row
+                           p_e_column_id STRUCTURE lvc_s_col
+                           p_es_row_no   STRUCTURE lvc_s_roid.
+
+  IF p_e_row_id-rowtype IS INITIAL.
+    READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+      INDEX p_e_row_id-index.
+    IF <fs_alv> IS ASSIGNED.
+      CASE p_e_column_id-fieldname.
+        WHEN 'BELNR'.
+          SET PARAMETER ID 'BLN' FIELD <fs_alv>-belnr.
+          SET PARAMETER ID 'BUK' FIELD <fs_alv>-bukrs.
+          SET PARAMETER ID 'GJR' FIELD <fs_alv>-gjahr.
+          CALL TRANSACTION 'FB03' AND SKIP FIRST SCREEN.
+        WHEN 'VBELN'.
+          SET PARAMETER ID 'VF' FIELD <fs_alv>-vbeln.
+          CALL TRANSACTION 'VF03' AND SKIP FIRST SCREEN.
+        WHEN 'ICON_ATTACHMENT'.
+          PERFORM open_pdf USING p_e_row_id-index.
+        WHEN 'ICON_GOS'.
+          PERFORM open_gos USING <fs_alv>-belnr
+                                 <fs_alv>-bukrs
+                                 <fs_alv>-gjahr
+                                 <fs_alv>-blart
+                                 <fs_alv>-zarchiving_doctype.
+      ENDCASE.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  OPEN_PDF
+*&---------------------------------------------------------------------*
+FORM open_pdf USING p_row_id.
+
+  READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+    INDEX p_row_id.
+  IF <fs_alv> IS ASSIGNED.
+    CLEAR: gv_document.
+    IF <fs_alv>-filename(1) = '/'.
+      PERFORM display_pdf     USING <fs_alv>-bukrs
+                                    <fs_alv>-belnr
+                                    <fs_alv>-gjahr
+                                    <fs_alv>-filename.
+    ELSE.
+      PERFORM display_pdf_toa USING <fs_alv>-bukrs
+                                    <fs_alv>-belnr
+                                    <fs_alv>-gjahr
+                                    <fs_alv>-zarchiving_doctype
+                                    <fs_alv>-blart
+                                    <fs_alv>-filename.
+    ENDIF.
+    "PERFORM display_pdf_container USING <fs_alv>-filename.
+  ENDIF.
+
+ENDFORM.                    " OPEN_PDF
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_PDF
+*&---------------------------------------------------------------------*
+FORM display_pdf USING pv_bukrs TYPE bukrs
+                       pv_belnr TYPE belnr_d
+                       pv_gjahr TYPE gjahr
+                       file     LIKE rlgrap-filename.
+
+  DATA: lt_file           LIKE rcgrepfile OCCURS 10 WITH HEADER LINE,
+        lv_file_size      LIKE  drao-orln,
+        lv_bin_filesize   TYPE i,
+        lv_len            LIKE sy-tabix,
+        lv_file_loc       TYPE string,
+        lv_file_separator TYPE c.
+
+  CALL METHOD cl_gui_frontend_services=>get_temp_directory
+    CHANGING
+      temp_dir = lv_file_loc.
+
+  CALL METHOD cl_gui_cfw=>flush.
+
+  CALL METHOD cl_gui_frontend_services=>get_file_separator
+    CHANGING
+      file_separator       = lv_file_separator
+    EXCEPTIONS
+      not_supported_by_gui = 1
+      error_no_gui         = 2
+      cntl_error           = 3
+      OTHERS               = 4.
+
+  CALL METHOD cl_gui_cfw=>flush.
+
+  SPLIT file AT '/' INTO TABLE DATA(lt_path).
+  DESCRIBE TABLE lt_path LINES DATA(lv_lines).
+  READ TABLE lt_path INTO DATA(ls_path) INDEX lv_lines.
+  lv_file_loc = ls_path.
+
+  CLEAR lv_len.
+  FREE lt_file[].
+  CLEAR lv_file_size.
+  OPEN DATASET file FOR INPUT IN BINARY MODE.
+
+  IF sy-subrc EQ 0.
+    DO.
+      CLEAR lv_len.
+      CLEAR lt_file.
+      READ DATASET file INTO lt_file LENGTH lv_len..
+      IF sy-subrc = 0.
+        lv_file_size = lv_file_size + lv_len.
+        APPEND lt_file.
+      ELSE.
+        IF lv_len > 0.
+          lv_file_size = lv_file_size + lv_len.
+          APPEND lt_file.
+        ENDIF.
+        EXIT.
+      ENDIF.
+    ENDDO.
+    CLOSE DATASET file.
+  ELSE.
+    MESSAGE 'Cannot open file destination' TYPE 'I'.
+    DATA(lv_exit) = 'X'.
+  ENDIF.
+  IF lv_exit IS INITIAL.
+    CHECK NOT lt_file[] IS INITIAL.
+    lv_bin_filesize = lv_file_size.
+
+    CALL FUNCTION 'GUI_DOWNLOAD'
+      EXPORTING
+        bin_filesize            = lv_bin_filesize
+        filename                = lv_file_loc
+        filetype                = 'BIN'
+      TABLES
+        data_tab                = lt_file[]
+      EXCEPTIONS
+        file_write_error        = 1
+        no_batch                = 2
+        gui_refuse_filetransfer = 3
+        invalid_type            = 4
+        no_authority            = 5
+        unknown_error           = 6
+        header_not_allowed      = 7
+        separator_not_allowed   = 8
+        filesize_not_allowed    = 9
+        header_too_long         = 10
+        dp_error_create         = 11
+        dp_error_send           = 12
+        dp_error_write          = 13
+        unknown_dp_error        = 14
+        access_denied           = 15
+        dp_out_of_memory        = 16
+        disk_full               = 17
+        dp_timeout              = 18
+        file_not_found          = 19
+        dataprovider_exception  = 20
+        control_flush_error     = 21
+        OTHERS                  = 22.
+    IF sy-subrc = 0.
+      COMMIT WORK AND WAIT.
+      CALL METHOD cl_gui_cfw=>flush
+        EXCEPTIONS
+          cntl_system_error = 1
+          cntl_error        = 2.
+      CALL FUNCTION 'WS_EXECUTE'
+        EXPORTING
+*         DOCUMENT           = ' '
+*         CD                 = ' '
+*         COMMANDLINE        = ' '
+*         INFORM             = ' '
+          program            = lv_file_loc
+*         STAT               = ' '
+*         WINID              = ' '
+*         OSMAC_SCRIPT       = ' '
+*         OSMAC_CREATOR      = ' '
+*         WIN16_EXT          = ' '
+*         EXEC_RC            = ' '
+*     IMPORTING
+*         RBUFF              =
+        EXCEPTIONS
+          frontend_error     = 1
+          no_batch           = 2
+          prog_not_found     = 3
+          illegal_option     = 4
+          gui_refuse_execute = 5
+          OTHERS             = 6.
+
+      DATA: lv_file_p TYPE rlgrap-filename.
+      lv_file_p = lv_file_loc.
+
+    ELSE.
+      MESSAGE w011(zsdovp).
+
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_PDF_TOA
+*&---------------------------------------------------------------------*
+FORM display_pdf_toa USING pv_bukrs   TYPE bukrs
+                           pv_belnr   TYPE belnr_d
+                           pv_gjahr   TYPE gjahr
+                           pv_doctype TYPE zaos_archiving_doctype
+                           pv_blart   TYPE blart
+                           file       LIKE rlgrap-filename.
+
+  DATA: lt_file LIKE rcgrepfile OCCURS 10 WITH HEADER LINE.
+  DATA: lv_file_size LIKE  drao-orln.
+  DATA: lv_bin_filesize  TYPE i.
+  DATA: lv_len LIKE sy-tabix.
+  DATA: lv_file_loc       TYPE string,
+        lv_file_separator TYPE c,
+        lv_toa_length     TYPE i,
+        lt_data           TYPE TABLE OF tbl1024,
+        lv_object_id      TYPE saeobjid.
+
+  CLEAR: lv_toa_length,
+         lt_data,
+         lv_object_id.
+
+  CALL METHOD cl_gui_frontend_services=>get_temp_directory
+    CHANGING
+      temp_dir = lv_file_loc.
+
+  CALL METHOD cl_gui_cfw=>flush.
+
+  CALL METHOD cl_gui_frontend_services=>get_file_separator
+    CHANGING
+      file_separator       = lv_file_separator
+    EXCEPTIONS
+      not_supported_by_gui = 1
+      error_no_gui         = 2
+      cntl_error           = 3
+      OTHERS               = 4.
+
+  CALL METHOD cl_gui_cfw=>flush.
+
+  SELECT *
+    FROM zaos_att_toa
+    INTO TABLE @DATA(lt_att_toa)
+    WHERE doctype = @pv_doctype
+      AND blart   = @pv_blart.
+  IF sy-subrc = 0.
+    DESCRIBE TABLE lt_att_toa LINES DATA(lv_lines_att).
+    IF lv_lines_att GT 1.
+      "lv_check_for_pdf = 'X'.
+    ENDIF.
+
+    SORT lt_att_toa BY counter ASCENDING.
+
+    READ TABLE lt_att_toa ASSIGNING FIELD-SYMBOL(<fs_att_toa>)
+      INDEX 1.
+    IF sy-subrc = 0 AND <fs_att_toa> IS ASSIGNED.
+
+      CONCATENATE lv_file_loc lv_file_separator pv_bukrs pv_belnr pv_gjahr '_Invoice.' <fs_att_toa>-reserve INTO lv_file_loc.
+
+      IF <fs_att_toa>-awkey IS INITIAL.
+        CONCATENATE pv_bukrs pv_belnr pv_gjahr INTO lv_object_id.
+      ELSE.
+        SELECT SINGLE awkey
+          FROM bkpf
+          INTO @DATA(lv_awkey)
+          WHERE bukrs = @pv_bukrs
+            AND belnr = @pv_belnr
+            AND gjahr = @pv_gjahr.
+        IF sy-subrc = 0.
+          lv_object_id = lv_awkey.
+        ENDIF.
+      ENDIF.
+
+      SELECT SINGLE *
+        FROM toa01
+        INTO @DATA(ls_toa01)
+        WHERE sap_object = @<fs_att_toa>-sap_object
+          AND object_id  = @lv_object_id
+          AND archiv_id  = @<fs_att_toa>-archiv_id
+          AND ar_object  = @<fs_att_toa>-ar_object
+          AND reserve    = @<fs_att_toa>-reserve.
+      IF sy-subrc EQ 0.
+        CALL FUNCTION 'SCMS_AO_TABLE_GET'
+          EXPORTING
+            arc_id       = ls_toa01-archiv_id
+            doc_id       = ls_toa01-arc_doc_id
+          IMPORTING
+            length       = lv_toa_length
+          TABLES
+            data         = lt_data
+          EXCEPTIONS
+            error_http   = 1
+            error_archiv = 2
+            error_kernel = 3
+            error_config = 4
+            OTHERS       = 5.
+      ENDIF.
+    ENDIF.
+
+  ENDIF.
+
+  IF lt_data[] IS INITIAL.
+    MESSAGE 'Cannot open file destination' TYPE 'I'.
+    DATA(lv_exit) = 'X'.
+  ENDIF.
+  IF lv_exit IS INITIAL.
+    lv_bin_filesize = lv_file_size.
+
+    CALL FUNCTION 'GUI_DOWNLOAD'
+      EXPORTING
+        bin_filesize            = lv_bin_filesize
+        filename                = lv_file_loc
+        filetype                = 'BIN'
+      TABLES
+        data_tab                = lt_data[]
+      EXCEPTIONS
+        file_write_error        = 1
+        no_batch                = 2
+        gui_refuse_filetransfer = 3
+        invalid_type            = 4
+        no_authority            = 5
+        unknown_error           = 6
+        header_not_allowed      = 7
+        separator_not_allowed   = 8
+        filesize_not_allowed    = 9
+        header_too_long         = 10
+        dp_error_create         = 11
+        dp_error_send           = 12
+        dp_error_write          = 13
+        unknown_dp_error        = 14
+        access_denied           = 15
+        dp_out_of_memory        = 16
+        disk_full               = 17
+        dp_timeout              = 18
+        file_not_found          = 19
+        dataprovider_exception  = 20
+        control_flush_error     = 21
+        OTHERS                  = 22.
+    IF sy-subrc = 0.
+      COMMIT WORK AND WAIT.
+      CALL METHOD cl_gui_cfw=>flush
+        EXCEPTIONS
+          cntl_system_error = 1
+          cntl_error        = 2.
+      CALL FUNCTION 'WS_EXECUTE'
+        EXPORTING
+*         DOCUMENT           = ' '
+*         CD                 = ' '
+*         COMMANDLINE        = ' '
+*         INFORM             = ' '
+          program            = lv_file_loc
+*         STAT               = ' '
+*         WINID              = ' '
+*         OSMAC_SCRIPT       = ' '
+*         OSMAC_CREATOR      = ' '
+*         WIN16_EXT          = ' '
+*         EXEC_RC            = ' '
+*     IMPORTING
+*         RBUFF              =
+        EXCEPTIONS
+          frontend_error     = 1
+          no_batch           = 2
+          prog_not_found     = 3
+          illegal_option     = 4
+          gui_refuse_execute = 5
+          OTHERS             = 6.
+
+      DATA: lv_file_p TYPE rlgrap-filename.
+      lv_file_p = lv_file_loc.
+
+    ELSE.
+      MESSAGE w011(zsdovp).
+
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CALL_300
+*&---------------------------------------------------------------------*
+FORM call_300.
+
+  CLEAR: gt_alv_300.
+
+  SELECT *
+    FROM zaos_registri
+    INTO CORRESPONDING FIELDS OF TABLE gt_alv_300
+    WHERE bukrs = p_bukrs.
+
+  LOOP AT gt_alv_300 ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED.
+      IF <fs_alv>-inv_conservazione IS INITIAL.
+        <fs_alv>-icon_inviato = '@09@'.
+      ELSE.
+        <fs_alv>-icon_inviato = '@08@'.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  CALL SCREEN 300.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  UPLOAD_FROM_SPOOL
+*&---------------------------------------------------------------------*
+FORM upload_from_spool .
+
+  DATA: lv_spoolid        TYPE rspoid,
+        lv_pdf            TYPE fpcontent,
+        lv_pagecount      TYPE i,
+        lv_pdf_file       TYPE string,
+        lv_al11_path(200) TYPE c VALUE '/tmp/',
+        lv_fullpath(200)  TYPE c,
+        lv_vscan_profile  TYPE vscan_profile,
+        lv_mimetype       TYPE bdn_con-mimetype,
+        lv_mod_time(8)    TYPE c,
+        lv_mod_date       TYPE d,
+        ls_fields         TYPE sval,
+        lt_fields         TYPE TABLE OF sval,
+        ls_aos_registri   TYPE zaos_registri,
+        pdf               LIKE tline OCCURS 100 WITH HEADER LINE,
+        doctab            LIKE docs OCCURS 1 WITH HEADER LINE,
+        numbytes          TYPE i,
+        arc_idx           LIKE toa_dara,
+        pdfspoolid        LIKE tsp01-rqident,
+        jobname           LIKE tbtcjob-jobname,
+        jobcount          LIKE tbtcjob-jobcount,
+        lv_filename       TYPE localfile,
+        lv_year           TYPE zaos_fiscal_year,
+        lv_object         TYPE zaos_reg_object,
+        lv_doctype        TYPE zaos_archiving_doctype,
+        lv_bukrs          TYPE bukrs,
+        lv_reg_number     TYPE char10.
+
+  CLEAR: lv_spoolid,
+         lv_pdf,
+         lv_pagecount,
+         lv_pdf_file,
+         lv_fullpath,
+         lv_vscan_profile,
+         lv_mimetype,
+         lv_mod_time,
+         lv_mod_date,
+         ls_fields,
+         lt_fields,
+         ls_aos_registri,
+         pdf,
+         doctab,
+         numbytes,
+         arc_idx,
+         pdfspoolid,
+         jobname,
+         jobcount,
+         lv_filename,
+         lv_year,
+         lv_object,
+         lv_doctype,
+         lv_bukrs,
+         lv_reg_number.
+
+  SELECT SINGLE low
+    FROM tvarvc
+    INTO @DATA(lv_low)
+   WHERE name = 'ZAOS_SAVE_FILE_PATH'.
+  IF lv_low IS INITIAL.
+    lv_low = lv_al11_path.
+  ENDIF.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'BUKRS'.
+  ls_fields-value     = p_bukrs.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'RSPOID'.
+  "ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'ZARCHIVING_DOCTYPE'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'FILENAME'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'FISCAL_YEAR'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_REGISTRI'.
+  ls_fields-fieldname = 'OBJECT'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  CALL FUNCTION 'POPUP_GET_VALUES'
+    EXPORTING
+      no_value_check  = 'X'
+      popup_title     = 'Insert Spool ID'
+    TABLES
+      fields          = lt_fields
+    EXCEPTIONS
+      error_in_fields = 1
+      OTHERS          = 2.
+
+  LOOP AT lt_fields INTO ls_fields.
+    CASE ls_fields-fieldname.
+      WHEN 'BUKRS'.
+        lv_bukrs   = ls_fields-value.
+      WHEN 'RSPOID'.
+        lv_spoolid  = ls_fields-value.
+      WHEN 'ZARCHIVING_DOCTYPE'.
+        lv_doctype  = ls_fields-value.
+      WHEN 'FILENAME'.
+        lv_filename = ls_fields-value.
+      WHEN 'FISCAL_YEAR'.
+        lv_year     = ls_fields-value.
+      WHEN 'OBJECT'.
+        lv_object   = ls_fields-value.
+    ENDCASE.
+  ENDLOOP.
+
+  CONCATENATE sy-uzeit(2) sy-uzeit+2(2) sy-uzeit+4(2) INTO lv_mod_time SEPARATED BY ':'.
+  CONCATENATE sy-datum+6(2) sy-datum+4(2) sy-datum(4) INTO lv_mod_date SEPARATED BY '.'.
+
+  IF lv_spoolid IS NOT INITIAL.
+    CALL FUNCTION 'CONVERT_OTFSPOOLJOB_2_PDF'
+      EXPORTING
+        src_spoolid              = lv_spoolid
+        no_dialog                = ' '
+      IMPORTING
+        pdf_bytecount            = numbytes
+        pdf_spoolid              = pdfspoolid
+        btc_jobname              = jobname
+        btc_jobcount             = jobcount
+      TABLES
+        pdf                      = pdf
+      EXCEPTIONS
+        err_no_otf_spooljob      = 1
+        err_no_spooljob          = 2
+        err_no_permission        = 3
+        err_conv_not_possible    = 4
+        err_bad_dstdevice        = 5
+        user_cancelled           = 6
+        err_spoolerror           = 7
+        err_temseerror           = 8
+        err_btcjob_open_failed   = 9
+        err_btcjob_submit_failed = 10
+        err_btcjob_close_failed  = 11
+        OTHERS                   = 12.
+    IF sy-subrc NE 0.
+      CALL FUNCTION 'CONVERT_ABAPSPOOLJOB_2_PDF'
+        EXPORTING
+          src_spoolid              = lv_spoolid
+          no_dialog                = ' '
+        IMPORTING
+          pdf_bytecount            = numbytes
+          pdf_spoolid              = pdfspoolid
+          btc_jobname              = jobname
+          btc_jobcount             = jobcount
+        TABLES
+          pdf                      = pdf
+        EXCEPTIONS
+          err_no_abap_spooljob     = 1
+          err_no_spooljob          = 2
+          err_no_permission        = 3
+          err_conv_not_possible    = 4
+          err_bad_destdevice       = 5
+          user_cancelled           = 6
+          err_spoolerror           = 7
+          err_temseerror           = 8
+          err_btcjob_open_failed   = 9
+          err_btcjob_submit_failed = 10
+          err_btcjob_close_failed  = 11
+          OTHERS                   = 12.
+
+    ENDIF.
+    IF pdf[] IS INITIAL.
+      MESSAGE w017(zaos_message) DISPLAY LIKE 'E'. EXIT.
+    ENDIF.
+  ENDIF.
+
+  IF lv_doctype(2) NE 'L_'.
+    MESSAGE 'Chosen document type not allowed!' TYPE 'E'.
+  ENDIF.
+
+  IF lv_spoolid IS NOT INITIAL.
+    lv_fullpath = lv_spoolid.
+    CONDENSE lv_fullpath.
+    "CONCATENATE lv_filename '_' lv_fullpath '.pdf' INTO lv_filename.
+    CONCATENATE lv_fullpath '_' lv_filename INTO lv_filename.
+  ENDIF.
+  CONCATENATE lv_low lv_filename INTO lv_fullpath.
+
+  OPEN DATASET lv_fullpath FOR OUTPUT IN BINARY MODE.
+  IF sy-subrc NE 0.
+    MESSAGE 'Cannot open file destination' TYPE 'I'.
+    EXIT.
+  ENDIF.
+  LOOP AT pdf ASSIGNING FIELD-SYMBOL(<pdf>).
+    TRANSFER <pdf> TO lv_fullpath.
+  ENDLOOP.
+  CLOSE DATASET lv_fullpath.
+
+  CALL FUNCTION 'NUMBER_GET_NEXT'
+    EXPORTING
+      nr_range_nr             = '1'
+      object                  = 'ZAOS_REG'
+*     QUANTITY                = '1'
+*     SUBOBJECT               = ' '
+*     TOYEAR                  = '0000'
+*     IGNORE_BUFFER           = ' '
+    IMPORTING
+      number                  = lv_reg_number
+    EXCEPTIONS
+      interval_not_found      = 1
+      number_range_not_intern = 2
+      object_not_found        = 3
+      quantity_is_0           = 4
+      quantity_is_not_1       = 5
+      interval_overflow       = 6
+      buffer_overflow         = 7
+      OTHERS                  = 8.
+  IF sy-subrc NE 0.
+    MESSAGE 'Cannot get next number' TYPE 'I'.
+    EXIT.
+  ENDIF.
+
+  ls_aos_registri-bukrs              = lv_bukrs.
+  ls_aos_registri-reg_number         = lv_reg_number.
+  ls_aos_registri-rspoid             = lv_spoolid.
+  ls_aos_registri-filename           = lv_filename.
+  ls_aos_registri-fiscal_year        = lv_year.
+  ls_aos_registri-object             = lv_object.
+  ls_aos_registri-upload_date        = sy-datum.
+  ls_aos_registri-upload_time        = sy-uzeit.
+  ls_aos_registri-full_filename      = lv_fullpath.
+  ls_aos_registri-usnam              = sy-uname.
+  ls_aos_registri-zarchiving_doctype = lv_doctype.
+
+  INSERT zaos_registri FROM ls_aos_registri.
+  IF sy-subrc <> 0.
+    MESSAGE w019(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ELSE.
+
+    CLEAR: gt_alv_300.
+
+    SELECT *
+      FROM zaos_registri
+      INTO TABLE gt_alv_300
+      WHERE bukrs = p_bukrs.
+
+    PERFORM refresh_icons_300.
+
+  ENDIF.
+
+  CALL METHOD go_grid_300->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SEND_SFTP
+*&---------------------------------------------------------------------*
+FORM send_sftp .
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  EVENT_TOP_OF_PAGE_300
+*&---------------------------------------------------------------------*
+FORM event_top_of_page_300  USING    p_go_dyndoc_id.
+
+  DATA: lv_text(255)  TYPE c,
+        lv_lines      TYPE i,
+        lv_lines_c(4) TYPE c,
+        lv_lines_e(4) TYPE c.
+
+  CLEAR: lv_text,
+         lv_lines,
+         lv_lines_c.
+
+  DESCRIBE TABLE gt_alv_300 LINES lv_lines.
+
+  CALL METHOD go_dyndoc_id_300->add_text
+    EXPORTING
+      text      = 'Cockpit Registri'
+      sap_style = cl_dd_area=>heading.
+
+  CALL METHOD go_dyndoc_id_300->new_line.
+
+  CONCATENATE 'User ID :' sy-uname INTO lv_text SEPARATED BY space.
+  PERFORM add_text_300 USING lv_text.
+  CALL METHOD go_dyndoc_id_300->new_line.
+
+  CLEAR : lv_text.
+  lv_lines_c = lv_lines.
+  CONCATENATE 'No of records :' lv_lines_c INTO lv_text SEPARATED BY space.
+  PERFORM add_text_300 USING lv_text.
+  CALL METHOD go_dyndoc_id_300->new_line.
+
+  CLEAR : lv_text.
+  WRITE sy-datum TO lv_text.
+  CONCATENATE 'Date :' lv_text INTO lv_text SEPARATED BY space.
+  PERFORM add_text_300 USING lv_text.
+  CALL METHOD go_dyndoc_id_300->new_line.
+
+  PERFORM html_300.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_BUKRS
+*&---------------------------------------------------------------------*
+FORM check_bukrs .
+
+  SELECT SINGLE bukrs
+    FROM t001
+    INTO @DATA(lv_bukrs)
+    WHERE bukrs = @p_bukrs.
+  IF sy-subrc <> 0.
+    MESSAGE w020(zaos_message) DISPLAY LIKE 'E'. EXIT.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_TEXT_300
+*&---------------------------------------------------------------------*
+FORM add_text_300 USING p_text TYPE sdydo_text_element.
+
+  CALL METHOD go_dyndoc_id_300->add_text
+    EXPORTING
+      text         = p_text
+      sap_emphasis = cl_dd_area=>heading.
+
+ENDFORM.                    " ADD_TEXT_300
+
+*&---------------------------------------------------------------------*
+*&      Form  HTML_300
+*&---------------------------------------------------------------------*
+FORM html_300.
+  DATA : dl_length        TYPE i,                           " Length
+         dl_background_id TYPE sdydo_key VALUE space. " Background_id
+
+  IF go_html_cntrl_300 IS INITIAL.
+    CREATE OBJECT go_html_cntrl_300
+      EXPORTING
+        parent = go_parent_html_300.
+  ENDIF.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_COMMENTARY_SET'
+    EXPORTING
+      document = go_dyndoc_id_300
+      bottom   = space
+    IMPORTING
+      length   = dl_length.
+
+  CALL METHOD go_dyndoc_id_300->merge_document.
+
+  CALL METHOD go_dyndoc_id_300->set_document_background
+    EXPORTING
+      picture_id = dl_background_id.
+
+  go_dyndoc_id_300->html_control = go_html_cntrl_300.
+
+  CALL METHOD go_dyndoc_id_300->display_document
+    EXPORTING
+      reuse_control      = 'X'
+      parent             = go_parent_html_300
+    EXCEPTIONS
+      html_display_error = 1.
+  IF sy-subrc NE 0.
+    "MESSAGE i999 WITH 'Error in displaying top-of-page'(036).
+  ENDIF.
+
+ENDFORM.                    " HTML_300
+
+*&---------------------------------------------------------------------*
+*&      Form  REFRESH_ICONS
+*&---------------------------------------------------------------------*
+FORM refresh_icons .
+
+*ICON_2 ICON_OKAY                      '@0V@'."  OK; Continue; Choose Value
+*ICON_2 ICON_POSITIVE                  '@04@'."  Positive; Good
+*ICON_2 ICON_NEGATIVE                  '@05@'."  Negative; Bad
+*ICON_2 ICON_LOCKED                    '@06@'."  Locked
+*ICON_2 ICON_UNLOCKED                  '@07@'."  Unlocked
+*ICON_4 ICON_GREEN_LIGHT               '@08@'."  Green light; Go; OK
+*ICON_4 ICON_YELLOW_LIGHT              '@09@'."  Yellow light; Caution
+*ICON_4 ICON_RED_LIGHT                 '@0A@'."  Red light; Negative
+*ICON_2 ICON_ALLOW                     '@8X@'."  Allow
+*ICON_2 ICON_REJECT                    '@8Y@'."  Reject
+*ICON_2 ICON_PDF                       '@IT@'."  Adobe Acrobat document
+
+  LOOP AT gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED.
+      "Inviato
+      IF <fs_alv>-inv_conservazione = 'X'.
+        <fs_alv>-icon_inviato = '@08@'.
+      ELSE.
+        <fs_alv>-icon_inviato = '@09@'.
+      ENDIF.
+      "Conservato
+      IF <fs_alv>-conservato = 'X'.
+        <fs_alv>-icon_conservato = '@08@'.
+      ELSEIF <fs_alv>-conservato = 'E'.
+        <fs_alv>-icon_conservato = '@0A@'.
+      ELSE.
+        <fs_alv>-icon_conservato = '@09@'.
+      ENDIF.
+      "Locked
+      IF <fs_alv>-change_lock = 'X'.
+        <fs_alv>-icon_locked = '@06@'.
+      ELSE.
+        CLEAR: <fs_alv>-icon_locked.
+      ENDIF.
+      "Allowed
+      IF <fs_alv>-allowed = 'X'.
+        <fs_alv>-icon_allowed = '@8X@'.
+      ELSE.
+        <fs_alv>-icon_allowed = '@8Y@'.
+      ENDIF.
+      "Errors
+      IF <fs_alv>-error = 'X'.
+        <fs_alv>-icon_errors = '@0A@'.
+      ELSE.
+        CLEAR <fs_alv>-icon_errors.
+      ENDIF.
+      "Attachement
+      IF <fs_alv>-filename IS NOT INITIAL.
+        <fs_alv>-icon_attachment = '@IT@'.
+      ELSE.
+        CLEAR <fs_alv>-icon_attachment.
+      ENDIF.
+*      IF <fs_alv>-zarchiving_doctype = 'V_NUMBER'.
+*        CLEAR: <fs_alv>-icon_attachment.
+*      ENDIF.
+      "GOS
+      <fs_alv>-icon_gos = '@QE@'.
+      IF <fs_alv>-zarchiving_doctype = 'V_NUMBER'.
+        CLEAR: <fs_alv>-icon_gos.
+      ENDIF.
+      "Metadata
+      IF <fs_alv>-metadata_incomplete = 'X'.
+        <fs_alv>-icon_metadata = '@0A@'.
+      ELSE.
+        CLEAR <fs_alv>-icon_metadata.
+      ENDIF.
+      "No File
+*      IF <fs_alv>-edoc_guid IS INITIAL AND <fs_alv>-filename IS INITIAL.
+*        <fs_alv>-no_file = 'X'.
+*      ELSE.
+*        CLEAR: <fs_alv>-no_file.
+*      ENDIF.
+      IF <fs_alv>-no_file = 'X'.
+        <fs_alv>-icon_no_file = '@0A@'.
+      ELSE.
+        CLEAR <fs_alv>-icon_no_file.
+      ENDIF.
+
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  REFRESH_ICONS
+*&---------------------------------------------------------------------*
+FORM refresh_icons_300 .
+
+*ICON_2 ICON_OKAY                      '@0V@'."  OK; Continue; Choose Value
+*ICON_2 ICON_POSITIVE                  '@04@'."  Positive; Good
+*ICON_2 ICON_NEGATIVE                  '@05@'."  Negative; Bad
+*ICON_2 ICON_LOCKED                    '@06@'."  Locked
+*ICON_2 ICON_UNLOCKED                  '@07@'."  Unlocked
+*ICON_4 ICON_GREEN_LIGHT               '@08@'."  Green light; Go; OK
+*ICON_4 ICON_YELLOW_LIGHT              '@09@'."  Yellow light; Caution
+*ICON_4 ICON_RED_LIGHT                 '@0A@'."  Red light; Negative
+*ICON_2 ICON_ALLOW                     '@8X@'."  Allow
+*ICON_2 ICON_REJECT                    '@8Y@'."  Reject
+*ICON_2 ICON_PDF                       '@IT@'."  Adobe Acrobat document
+
+  LOOP AT gt_alv_300 ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED.
+      "Inviato
+      IF <fs_alv>-inv_conservazione = 'X'.
+        <fs_alv>-icon_inviato = '@08@'.
+      ELSE.
+        <fs_alv>-icon_inviato = '@09@'.
+      ENDIF.
+      "Conservato
+      IF <fs_alv>-conservato = 'X'.
+        <fs_alv>-icon_conservato = '@08@'.
+      ELSEIF <fs_alv>-conservato = 'E'.
+        <fs_alv>-icon_conservato = '@0A@'.
+      ELSE.
+        <fs_alv>-icon_conservato = '@09@'.
+      ENDIF.
+      "Allowed
+      IF <fs_alv>-allowed = 'X'.
+        <fs_alv>-icon_allowed = '@8X@'.
+      ELSE.
+        <fs_alv>-icon_allowed = '@8Y@'.
+      ENDIF.
+      "Errors
+      IF <fs_alv>-error = 'X'.
+        <fs_alv>-icon_errors = '@0A@'.
+      ELSE.
+        CLEAR <fs_alv>-icon_errors.
+      ENDIF.
+      "Locked
+      IF <fs_alv>-change_lock = 'X'.
+        <fs_alv>-icon_locked = '@06@'.
+      ELSE.
+        CLEAR: <fs_alv>-icon_locked.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  OPEN_PDF_CONTAINER
+*&---------------------------------------------------------------------*
+FORM display_pdf_container USING file LIKE rlgrap-filename.
+
+  DATA: lt_file           LIKE rcgrepfile OCCURS 10 WITH HEADER LINE,
+        lv_file_size      LIKE  drao-orln,
+        lv_bin_filesize   TYPE i,
+        lv_len            LIKE sy-tabix,
+        lo_html_container TYPE REF TO cl_gui_html_viewer,
+        lt_data           TYPE TABLE OF rcgrepfile.
+
+  CLEAR: lt_file,
+         lv_file_size,
+         lv_bin_filesize,
+         lv_len,
+         lo_html_container,
+         lt_data.
+
+  OPEN DATASET file FOR INPUT IN BINARY MODE.
+
+  IF sy-subrc EQ 0.
+    DO.
+      CLEAR lv_len.
+      CLEAR lt_file.
+      READ DATASET file INTO lt_file LENGTH lv_len.
+      IF sy-subrc = 0.
+        lv_file_size = lv_file_size + lv_len.
+        APPEND lt_file.
+      ELSE.
+        IF lv_len > 0.
+          lv_file_size = lv_file_size + lv_len.
+          APPEND lt_file.
+        ENDIF.
+        EXIT.
+      ENDIF.
+    ENDDO.
+    CLOSE DATASET file.
+  ELSE.
+    MESSAGE 'Cannot open file destination' TYPE 'I'.
+    EXIT.
+  ENDIF.
+  CHECK NOT lt_file[] IS INITIAL.
+  lv_bin_filesize = lv_file_size.
+
+  lt_data[] = lt_file[].
+
+  CREATE OBJECT lo_html_container
+    EXPORTING
+      parent = go_pdf_container.
+
+  lo_html_container->load_data(
+    EXPORTING
+      type = `application`
+      subtype = `pdf`
+    IMPORTING
+       assigned_url = file
+    CHANGING
+      data_table = lt_data
+    EXCEPTIONS
+      dp_invalid_parameter = 1
+      dp_error_general = 2
+      cntl_error = 3
+      OTHERS = 4 ).
+
+  lo_html_container->show_url( url = file in_place = 'X' ).
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_LOGS
+*&---------------------------------------------------------------------*
+FORM show_logs .
+
+  DATA: lr_bukrs TYPE RANGE OF zaos_data-bukrs,
+        ls_bukrs LIKE LINE OF lr_bukrs,
+        lr_belnr TYPE RANGE OF zaos_data-belnr,
+        ls_belnr LIKE LINE OF lr_belnr,
+        lr_gjahr TYPE RANGE OF zaos_data-gjahr,
+        ls_gjahr LIKE LINE OF lr_gjahr.
+
+  CLEAR: lr_bukrs,
+         ls_bukrs,
+         lr_belnr,
+         ls_belnr,
+         lr_gjahr,
+         ls_gjahr.
+
+  LOOP AT gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>).
+    IF <fs_alv> IS ASSIGNED.
+      CLEAR: ls_bukrs, ls_belnr, ls_gjahr.
+      ls_bukrs-option = ls_belnr-option = ls_gjahr-option = 'EQ'.
+      ls_bukrs-sign   = ls_belnr-sign   = ls_gjahr-sign   = 'I'.
+      ls_bukrs-low    = <fs_alv>-bukrs.
+      ls_belnr-low    = <fs_alv>-belnr.
+      ls_gjahr-low    = <fs_alv>-gjahr.
+      APPEND ls_bukrs TO lr_bukrs.
+      APPEND ls_belnr TO lr_belnr.
+      APPEND ls_gjahr TO lr_gjahr.
+    ENDIF.
+  ENDLOOP.
+
+  SUBMIT zaos_log
+    WITH s_bukrs IN lr_bukrs
+    WITH s_belnr IN lr_belnr
+    WITH s_gjahr IN lr_gjahr
+    AND RETURN.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  VARIANT_HELP
+*&---------------------------------------------------------------------*
+FORM variant_help.
+
+  DATA: ls_variant TYPE disvariant.
+
+  ls_variant-report = sy-repid.
+
+  CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
+    EXPORTING
+      is_variant = ls_variant
+      i_save     = 'A'
+    IMPORTING
+      es_variant = ls_variant
+    EXCEPTIONS
+      not_found  = 2.
+
+  p_var = ls_variant-variant.
+
+ENDFORM.                    " VARIANT_HELP
+*&---------------------------------------------------------------------*
+*&      Form  OPEN_GOS
+*&---------------------------------------------------------------------*
+FORM open_gos USING p_belnr   TYPE belnr_d
+                    p_bukrs   TYPE bukrs
+                    p_gjahr   TYPE gjahr
+                    p_blart   TYPE blart
+                    p_doctype TYPE zaos_archiving_doctype.
+
+  DATA: ls_object TYPE sibflporb.
+
+  CLEAR: ls_object.
+
+  CONCATENATE p_bukrs p_belnr p_gjahr INTO ls_object-instid.
+  ls_object-typeid = 'BKPF'.
+  ls_object-catid  = 'BO'.
+
+  CALL FUNCTION 'GOS_ATTACHMENT_LIST_POPUP'
+    EXPORTING
+      is_object = ls_object
+      ip_mode   = 'C'.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CLEAR_ALV_TABLES
+*&---------------------------------------------------------------------*
+FORM clear_alv_tables .
+
+  CLEAR: gt_alv,
+         gt_alv_200,
+         gt_alv_300.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  UPLOAD_BUCHI_NUMERAZIONE
+*&---------------------------------------------------------------------*
+FORM upload_buchi_numerazione .
+
+  DATA: lt_data           LIKE rcgrepfile OCCURS 10 WITH HEADER LINE,
+        ls_fields         TYPE sval,
+        lt_fields         TYPE TABLE OF sval,
+        lt_filetable      TYPE filetable,
+        lv_fullpath       TYPE string,
+        ls_aos_data       TYPE zaos_data,
+        ls_aos_metadata   TYPE zaos_metadata,
+        lv_rc             TYPE i,
+        lv_al11_path(200) TYPE c VALUE '/tmp/',
+        lv_file_separator TYPE c.
+
+  CLEAR: lt_data,
+         ls_fields,
+         lt_fields,
+         lt_filetable,
+         lv_fullpath,
+         ls_aos_data,
+         ls_aos_metadata,
+         lv_rc,
+         lv_file_separator.
+
+  SELECT SINGLE low
+    FROM tvarvc
+    INTO @DATA(lv_low)
+   WHERE name = 'ZAOS_SAVE_FILE_PATH'.
+  IF lv_low IS INITIAL.
+    lv_low = lv_al11_path.
+  ENDIF.
+
+  CALL METHOD cl_gui_frontend_services=>get_file_separator
+    CHANGING
+      file_separator       = lv_file_separator
+    EXCEPTIONS
+      not_supported_by_gui = 1
+      error_no_gui         = 2
+      cntl_error           = 3
+      OTHERS               = 4.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    EXPORTING
+      default_extension       = '.PDF'
+    CHANGING
+      file_table              = lt_filetable
+      rc                      = lv_rc
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+  IF sy-subrc = 0.
+    READ TABLE lt_filetable ASSIGNING FIELD-SYMBOL(<fs_filetable>)
+      INDEX 1.
+    IF <fs_filetable> IS ASSIGNED.
+      lv_fullpath = <fs_filetable>.
+    ENDIF.
+  ENDIF.
+
+  SPLIT lv_fullpath AT lv_file_separator INTO TABLE DATA(lt_path).
+  DESCRIBE TABLE lt_path LINES DATA(lv_lines).
+  READ TABLE lt_path INTO DATA(ls_path) INDEX lv_lines.
+  CONCATENATE p_bukrs ls_path INTO ls_path SEPARATED BY '_'.
+  SPLIT ls_path AT '.' INTO DATA(lv_waste) DATA(lv_ext).
+  TRANSLATE lv_ext TO UPPER CASE.
+  IF lv_ext NE 'PDF'.
+    MESSAGE w033(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'BUKRS'.
+  ls_fields-value     = p_bukrs.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'BELNR'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'GJAHR'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'BLART'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'BLDAT'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'ZARCHIVING_DOCTYPE'.
+  ls_fields-field_obl = 'X'.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  ls_fields-tabname   = 'ZAOS_DATA'.
+  ls_fields-fieldname = 'FILENAME'.
+  ls_fields-field_obl = 'X'.
+  ls_fields-value     = ls_path.
+  APPEND ls_fields TO lt_fields.
+  CLEAR: ls_fields.
+
+  CALL FUNCTION 'POPUP_GET_VALUES'
+    EXPORTING
+      no_value_check  = 'X'
+      popup_title     = 'Upload Document'
+    TABLES
+      fields          = lt_fields
+    EXCEPTIONS
+      error_in_fields = 1
+      OTHERS          = 2.
+
+  LOOP AT lt_fields INTO ls_fields.
+    CASE ls_fields-fieldname.
+      WHEN 'BUKRS'.
+        ls_aos_data-bukrs   = ls_fields-value.
+      WHEN 'BELNR'.
+        ls_aos_data-belnr   = ls_fields-value.
+      WHEN 'GJAHR'.
+        ls_aos_data-gjahr   = ls_fields-value.
+      WHEN 'BLART'.
+        ls_aos_data-blart   = ls_fields-value.
+      WHEN 'BLDAT'.
+        ls_aos_data-bldat   = ls_fields-value.
+      WHEN 'ZARCHIVING_DOCTYPE'.
+        ls_aos_data-zarchiving_doctype = ls_fields-value.
+      WHEN 'FILENAME'.
+        ls_aos_data-filename = ls_fields-value.
+    ENDCASE.
+  ENDLOOP.
+
+  IF ls_aos_data-belnr IS NOT INITIAL AND ls_aos_data-filename IS NOT INITIAL.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename                = lv_fullpath
+        filetype                = 'ASC'
+*       NO_AUTH_CHECK           = ' '
+      TABLES
+        data_tab                = lt_data
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        OTHERS                  = 17.
+    IF sy-subrc = 0.
+      CLEAR: lv_fullpath.
+      CONCATENATE lv_low ls_aos_data-filename INTO lv_fullpath.
+      OPEN DATASET lv_fullpath FOR OUTPUT IN BINARY MODE.
+      IF sy-subrc NE 0.
+        MESSAGE 'Cannot open file destination' TYPE 'E'.
+        EXIT.
+      ENDIF.
+      LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<data>).
+        TRANSFER <data> TO lv_fullpath.
+      ENDLOOP.
+      CLOSE DATASET lv_fullpath.
+
+      ls_aos_data-budat               = ls_aos_data-bldat.
+      ls_aos_data-metadata_incomplete = 'X'.
+      ls_aos_data-filename            = lv_fullpath.
+
+      ls_aos_metadata-bukrs           = ls_aos_data-bukrs.
+      ls_aos_metadata-numero_fattura  = ls_aos_data-belnr.
+      ls_aos_metadata-data_fattura    = ls_aos_data-bldat.
+      INSERT zaos_data     FROM ls_aos_data.
+      INSERT zaos_metadata FROM ls_aos_metadata.
+    ENDIF.
+
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  REFRESH
+*&---------------------------------------------------------------------*
+FORM refresh .
+
+  PERFORM clear_alv_tables.
+  PERFORM get_data.
+  PERFORM refresh_icons.
+
+  SORT gt_alv BY bukrs belnr gjahr ASCENDING.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DELETE_LINE_FROM_DB
+*&---------------------------------------------------------------------*
+FORM delete_line_from_db .
+
+  DATA: lt_index_rows  TYPE lvc_t_row,
+        lt_row_no      TYPE lvc_t_roid,
+        lv_lines       TYPE i,
+        lv_x           TYPE char1 VALUE 'X',
+        ls_zaos_data   TYPE zaos_data,
+        lv_answer      TYPE c,
+        ls_bapiret     TYPE bapiret2,
+        lt_bapiret     TYPE TABLE OF bapiret2,
+        lv_title       TYPE string,
+        lv_text_object TYPE dokhl-object,
+        lv_refresh     TYPE c.
+
+  CLEAR: lt_index_rows,
+         lt_row_no,
+         lv_lines,
+         ls_zaos_data,
+         lv_answer,
+         ls_bapiret,
+         lt_bapiret,
+         lv_title,
+         lv_text_object,
+         lv_refresh.
+
+  SELECT SINGLE *
+    FROM zaos_auth_user
+    INTO @DATA(ls_auth_user)
+    WHERE uname      = @sy-uname
+      AND authorized = 'X'.
+  IF sy-subrc NE 0.
+    MESSAGE w036(zaos_message) DISPLAY LIKE 'E'. EXIT.
+  ENDIF.
+
+  CALL METHOD go_grid_100->check_changed_data
+    CHANGING
+      c_refresh = lv_x.
+
+  CALL METHOD go_grid_100->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_no.
+
+  lv_title = 'Document Deletion Information'.
+  lv_text_object = 'ZAOS_002'.
+
+  CALL FUNCTION 'POPUP_DISPLAY_TEXT'
+    EXPORTING
+      language       = sy-langu
+      popup_title    = lv_title
+*     START_COLUMN   = 10
+*     START_ROW      = 3
+      text_object    = lv_text_object
+*     HELP_MODAL     = 'X'
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+
+  IF sy-ucomm NE 'DBAC'.
+    EXIT.
+  ENDIF.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar       = 'Delete'
+      text_question  = 'Delete selected lines from DB?'
+      text_button_1  = 'Yes'
+*     ICON_BUTTON_1  = ' '
+      text_button_2  = 'No'
+*     ICON_BUTTON_2  = ' '
+    IMPORTING
+      answer         = lv_answer
+    EXCEPTIONS
+      text_not_found = 1
+      OTHERS         = 2.
+  IF lv_answer = '1'.
+    lv_refresh = 'X'.
+    LOOP AT lt_index_rows ASSIGNING FIELD-SYMBOL(<fs_index>).
+      IF <fs_index> IS ASSIGNED.
+        READ TABLE gt_alv ASSIGNING FIELD-SYMBOL(<fs_alv>)
+          INDEX <fs_index>-index.
+
+        IF <fs_alv>-change_lock IS NOT INITIAL.
+          CLEAR: ls_bapiret.
+          ls_bapiret-type   = 'E'.
+          ls_bapiret-id     = 'ZAOS_MESSAGE'.
+          ls_bapiret-number = '034'.
+          ls_bapiret-message_v1 = <fs_alv>-bukrs.
+          ls_bapiret-message_v2 = <fs_alv>-belnr.
+          ls_bapiret-message_v3 = <fs_alv>-gjahr.
+          ls_bapiret-message_v4 = <fs_alv>-blart.
+          CONCATENATE 'Data for document' <fs_alv>-bukrs <fs_alv>-belnr <fs_alv>-gjahr <fs_alv>-blart 'is locked, cannot delete.'
+            INTO ls_bapiret-message SEPARATED BY space.
+          APPEND ls_bapiret TO lt_bapiret.
+        ELSE.
+
+          DELETE FROM zaos_data     WHERE bukrs = <fs_alv>-bukrs
+                                      AND belnr = <fs_alv>-belnr
+                                      AND gjahr = <fs_alv>-gjahr
+                                      AND blart = <fs_alv>-blart.
+
+          DELETE FROM zaos_metadata WHERE bukrs          = <fs_alv>-bukrs
+                                      AND numero_fattura = <fs_alv>-belnr
+                                      AND gjahr          = <fs_alv>-gjahr.
+
+          DELETE FROM zaos_log      WHERE bukrs = <fs_alv>-bukrs
+                                      AND belnr = <fs_alv>-belnr
+                                      AND gjahr = <fs_alv>-gjahr.
+
+          CLEAR: ls_bapiret.
+          ls_bapiret-type   = 'I'.
+          ls_bapiret-id     = 'ZAOS_MESSAGE'.
+          ls_bapiret-number = '034'.
+          ls_bapiret-message_v1 = <fs_alv>-bukrs.
+          ls_bapiret-message_v2 = <fs_alv>-belnr.
+          ls_bapiret-message_v3 = <fs_alv>-gjahr.
+          ls_bapiret-message_v4 = <fs_alv>-blart.
+          CONCATENATE 'Data for document' <fs_alv>-bukrs <fs_alv>-belnr <fs_alv>-gjahr <fs_alv>-blart 'deleted from DB tables.'
+            INTO ls_bapiret-message SEPARATED BY space.
+          APPEND ls_bapiret TO lt_bapiret.
+
+        ENDIF.
+
+      ENDIF.
+    ENDLOOP.
+
+    CALL FUNCTION 'RSCRMBW_DISPLAY_BAPIRET2'
+      TABLES
+        it_return = lt_bapiret.
+
+
+  ENDIF.
+
+  IF lv_refresh = 'X'.
+    PERFORM refresh.
+  ENDIF.
+
+  PERFORM refresh_icons.
+
+  CALL METHOD go_grid_100->refresh_table_display
+    EXPORTING
+      i_soft_refresh = 'X'
+    EXCEPTIONS
+      finished       = 1
+      OTHERS         = 2.
+
+ENDFORM.
