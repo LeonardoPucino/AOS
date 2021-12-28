@@ -1,0 +1,953 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZAOS_COCKPIT_F02
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+
+  SET PF-STATUS 'MAIN100'.
+  SET TITLEBAR 'MAIN100'.
+
+  DATA: lv_container_100        TYPE scrfname VALUE 'CONTAINER_100',
+        lv_custom_container_100 TYPE REF TO cl_gui_docking_container,
+        "lv_pdf_container        TYPE REF TO cl_gui_docking_container,
+        lv_splitter             TYPE REF TO cl_gui_splitter_container,
+        lv_parent_container_alv TYPE REF TO cl_gui_container,
+        lv_parent_container_pdf TYPE REF TO cl_gui_container,
+        lv_ratio                TYPE i,
+        lo_client_information   TYPE REF TO if_wd_client_information,
+        ls_layout_100           TYPE lvc_s_layo,
+        ls_variant_100          TYPE disvariant,
+        lv_x_100                TYPE char1 VALUE 'X'.
+
+  IF lv_custom_container_100 IS INITIAL.
+
+    CREATE OBJECT lv_splitter
+      EXPORTING
+        columns           = 2
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+
+    CALL METHOD lv_splitter->get_container
+      EXPORTING
+        row       = 1
+        column    = 1
+      RECEIVING
+        container = lv_parent_container_alv.
+
+*    CALL METHOD lv_splitter->get_container
+*      EXPORTING
+*        row       = 1
+*        column    = 2
+*      RECEIVING
+*        container = lv_parent_container_pdf.
+
+    lv_ratio = 95.
+
+    CREATE OBJECT lv_custom_container_100
+      EXPORTING
+        parent                      = lv_parent_container_alv
+        side                        = cl_gui_docking_container=>dock_at_left
+        extension                   = 99999
+        "ratio                       = lv_ratio
+        caption                     = 'Cockpit AOS'
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+
+*    lv_ratio = 30.
+*
+*    CREATE OBJECT go_pdf_container
+*      EXPORTING
+*        parent                      = lv_parent_container_pdf
+*        side                        = cl_gui_docking_container=>dock_at_right
+*        extension                   = 99999
+*        "ratio                       = lv_ratio
+*        caption                     = 'PDF'
+*      EXCEPTIONS
+*        cntl_error                  = 1
+*        cntl_system_error           = 2
+*        create_error                = 3
+*        lifetime_error              = 4
+*        lifetime_dynpro_dynpro_link = 5
+*        OTHERS                      = 6.
+
+    CREATE OBJECT go_dyndoc_id
+      EXPORTING
+        style = 'ALV_GRID'.
+
+    CREATE OBJECT go_splitter
+      EXPORTING
+        parent  = lv_custom_container_100
+        rows    = 2
+        columns = 1.
+
+    CALL METHOD go_splitter->get_container
+      EXPORTING
+        row       = 1
+        column    = 1
+      RECEIVING
+        container = go_parent_html.
+    CALL METHOD go_splitter->get_container
+      EXPORTING
+        row       = 2
+        column    = 1
+      RECEIVING
+        container = go_parent_grid.
+
+    CALL METHOD go_splitter->set_row_height
+      EXPORTING
+        id     = 1
+        height = 10.
+
+    CREATE OBJECT go_grid_100
+      EXPORTING
+        i_parent = go_parent_grid.
+
+    CREATE OBJECT go_handler.
+    "SET HANDLER go_handler->handle_double_click FOR g_grid.
+    SET HANDLER go_handler->hotspot_click FOR go_grid_100.
+    SET HANDLER go_handler->top_of_page   FOR go_grid_100.
+
+    PERFORM select_data_and_init_style_100.
+
+    ls_layout_100-stylefname = 'CELLTAB'.
+    ls_layout_100-sel_mode   = 'D'.
+
+    ls_variant_100-report       = sy-repid.
+    ls_variant_100-username     = sy-uname.
+    ls_variant_100-variant      = p_var.
+
+    SORT gt_alv BY bukrs belnr gjahr ASCENDING.
+
+    CALL METHOD go_grid_100->set_table_for_first_display
+      EXPORTING
+        i_structure_name              = 'ZAOS_DATA'
+        is_layout                     = ls_layout_100
+        is_variant                    = ls_variant_100
+        i_save                        = 'A'
+      CHANGING
+        it_outtab                     = gt_alv
+        it_fieldcatalog               = gt_fcat
+      EXCEPTIONS
+        invalid_parameter_combination = 1
+        program_error                 = 2
+        too_many_lines                = 3
+        OTHERS                        = 4.
+
+    CALL METHOD go_dyndoc_id->initialize_document.
+
+    CALL METHOD go_grid_100->list_processing_events
+      EXPORTING
+        i_event_name = 'TOP_OF_PAGE'
+        i_dyndoc_id  = go_dyndoc_id.
+
+    CALL METHOD go_grid_100->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 0.
+
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+
+  DATA: save_ok_100 TYPE sy-ucomm.
+
+  save_ok_100 = ok_code.
+  CLEAR ok_code.
+
+  CASE save_ok_100.
+    WHEN 'REFRESH'.
+      PERFORM refresh.
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN 'LEAVE'.
+      LEAVE PROGRAM.
+    WHEN 'EXIT'.
+      LEAVE PROGRAM.
+    WHEN 'EDIT'.
+      PERFORM edit_metadata.
+    WHEN 'NOTE'.
+      PERFORM add_metadata_note.
+    WHEN 'ALLOW'.
+      PERFORM allow_documents_for_archiving.
+    WHEN 'REVOKE'.
+      PERFORM revoke_documents_for_archiving.
+    WHEN 'ERRORINFO'.
+      PERFORM error_info.
+    WHEN 'VIEWER'.
+      PERFORM fatel_viewer.
+    WHEN 'LOG'.
+      PERFORM show_logs.
+    WHEN 'REGISTRI'.
+      "MESSAGE 'No data to display' TYPE 'I'.
+      PERFORM call_300.
+    WHEN 'MANUAL'.
+      PERFORM confirm_manual_upload.
+    WHEN 'UPLOAD'.
+      PERFORM upload_buchi_numerazione.
+    WHEN 'DELETE'.
+      PERFORM delete_line_from_db.
+  ENDCASE.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*& Form SELECT_DATA_AND_INIT_STYLE_100
+*&---------------------------------------------------------------------*
+FORM select_data_and_init_style_100 .
+
+  DATA: lv_lines TYPE i.
+
+  CLEAR: lv_lines,
+         gt_fcat.
+
+  PERFORM refresh_icons.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name       = 'ZAOS_DATA'
+    CHANGING
+      ct_fieldcat            = gt_fcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+
+  DESCRIBE TABLE gt_fcat LINES lv_lines.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_ALLOWED'.
+  gs_fcat-scrtext_s = 'Allowed'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 1.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_INVIATO'.
+  gs_fcat-scrtext_s = 'Sent'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 2.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_CONSERVATO'.
+  gs_fcat-scrtext_s = 'Archived'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 3.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_METADATA'.
+  gs_fcat-scrtext_s = 'Incomplete Metadata'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 4.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_ATTACHMENT'.
+  gs_fcat-scrtext_s = 'Attachment'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 5.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_GOS'.
+  gs_fcat-scrtext_s = 'GOS'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 6.
+  APPEND gs_fcat TO gt_fcat.
+
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_ERRORS'.
+  gs_fcat-scrtext_s = 'Errors'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 7.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR: gs_fcat.
+  gs_fcat-col_pos   = lv_lines + 8.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING col_pos WHERE fieldname EQ 'ERROR_CODE'.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_LOCKED'.
+  gs_fcat-scrtext_s = 'Locked'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 9.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR gs_fcat.
+  gs_fcat-fieldname = 'ICON_NO_FILE'.
+  gs_fcat-scrtext_s = 'No File'.
+  gs_fcat-scrtext_m = 'File not found'.
+  gs_fcat-scrtext_l = 'File not found'.
+  gs_fcat-col_opt   = 'X'.
+  gs_fcat-icon      = 'X'.
+  gs_fcat-col_pos   = lv_lines + 9.
+  APPEND gs_fcat TO gt_fcat.
+
+  CLEAR:gs_fcat.
+  gs_fcat-col_opt = abap_true.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING col_opt WHERE fieldname NE space.
+
+  CLEAR gs_fcat.
+  gs_fcat-hotspot = abap_true.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING hotspot WHERE fieldname EQ 'BELNR'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING hotspot WHERE fieldname EQ 'VBELN'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING hotspot WHERE fieldname EQ 'ICON_ATTACHMENT'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING hotspot WHERE fieldname EQ 'ICON_GOS'.
+
+  CLEAR gs_fcat.
+  gs_fcat-no_out = abap_true.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'CHANGE_LOCK'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'INV_CONSERVAZIONE'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'CONSERVATO'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ALLOWED'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ERROR'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'METADATA_INCOMPLETE'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'FILENAME'.
+  "MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ERROR_CODE'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ACTIVE_VERSION'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'EDOC_SOURCE_TYPE'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'EDOC_SOURCE_KEY'.
+  MODIFY gt_fcat FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'EDOC_GUID'.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  FILL_CELLTAB
+*&---------------------------------------------------------------------*
+FORM fill_celltab_100 USING ps_alv     TYPE ty_alv
+                   CHANGING pt_celltab TYPE lvc_t_styl.
+
+  DATA: ls_celltab TYPE lvc_s_styl.
+
+  ls_celltab-fieldname = 'BUKRS'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'BELNR'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'GJAHR'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'ZARCHIVING_DOCTYPE'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'FKART'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'VKORG'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'VTWEG'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'USNAM'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'KUNRG'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'FKDAT'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'PROCESSO'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'PACCHETTO'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'STATUS'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'CONSERVAZIONE'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'ALLOWED'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'CHANGE_LOCK'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'FILENAME'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'MTIM'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'ACTIVE_VERSION'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'EDOC_SOURCE_TYPE'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+  ls_celltab-fieldname = 'EDOC_SOURCE_KEY'.
+  ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+  INSERT ls_celltab INTO TABLE pt_celltab.
+
+
+ENDFORM.                               " FILL_CELLTAB
+
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0200  OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0200 OUTPUT.
+
+  SET PF-STATUS 'MAIN200'.
+  SET TITLEBAR 'MAIN200'.
+
+  DATA: lv_container_200        TYPE scrfname VALUE 'CONTAINER_200',
+        lv_custom_container_200 TYPE REF TO cl_gui_custom_container,
+        ls_layout_200           TYPE lvc_s_layo,
+        ls_variant_200          TYPE disvariant,
+        ls_fieldcat             TYPE lvc_s_fcat,
+        lt_fieldcat             TYPE lvc_t_fcat,
+        lv_x_200                TYPE char1 VALUE 'X'.
+
+  IF go_grid_200 IS NOT INITIAL.
+    CALL METHOD lv_custom_container_200->free
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+    CALL METHOD go_grid_200->free
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+    FREE: lv_custom_container_200, go_grid_200.
+  ENDIF.
+
+  CREATE OBJECT lv_custom_container_200
+    EXPORTING
+      container_name = lv_container_200.
+
+  CREATE OBJECT go_grid_200
+    EXPORTING
+      i_parent = lv_custom_container_200.
+
+  IF ls_layout_200 IS INITIAL.
+    ls_layout_200-sel_mode   = 'D'.
+    ls_layout_200-no_headers = 'X'.
+  ENDIF.
+
+*  IF ls_variant_200 IS INITIAL.
+*    ls_variant_200-report   = sy-repid.
+*    ls_variant_200-username = sy-uname.
+*  ENDIF.
+
+  IF lt_fieldcat IS INITIAL.
+    ls_fieldcat-fieldname = 'LABEL'.
+    ls_fieldcat-scrtext_s = 'Label'.
+    ls_fieldcat-col_opt   = 'X'.
+    APPEND ls_fieldcat TO lt_fieldcat.
+    ls_fieldcat-fieldname = 'VALUE'.
+    ls_fieldcat-scrtext_s = 'Value'.
+    ls_fieldcat-edit      = 'X'.
+    ls_fieldcat-intlen    = '50'.
+    APPEND ls_fieldcat TO lt_fieldcat.
+    ls_fieldcat-fieldname = 'FIELD'.
+    ls_fieldcat-no_out    = 'X'.
+    ls_fieldcat-scrtext_s = 'Field'.
+    APPEND ls_fieldcat TO lt_fieldcat.
+  ENDIF.
+
+  CALL METHOD go_grid_200->set_table_for_first_display
+    EXPORTING
+      is_layout       = ls_layout_200
+      "is_variant      = ls_variant_200
+      "i_save          = 'A'
+    CHANGING
+      it_fieldcatalog = lt_fieldcat
+      it_outtab       = gt_alv_200.
+
+*  CALL METHOD go_grid_200->set_ready_for_input
+*    EXPORTING
+*      i_ready_for_input = 1.
+
+  IF gv_edit = 'X'.
+    CALL METHOD go_grid_200->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 1.
+  ELSE.
+    CALL METHOD go_grid_200->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 0.
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0200  INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0200 INPUT.
+
+  DATA: save_ok_200 TYPE sy-ucomm.
+
+  save_ok_200 = ok_code.
+  CLEAR ok_code.
+
+  CASE save_ok_200.
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN 'EXIT'.
+      LEAVE TO SCREEN 0.
+    WHEN 'SWITCH'.
+      PERFORM switch_edit_mode.
+    WHEN 'SAVE'.
+      PERFORM save_200.
+  ENDCASE.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Form  FILL_VERTICAL_ALV
+*&---------------------------------------------------------------------*
+FORM fill_vertical_alv  USING    ps_alv     TYPE ty_alv
+                        CHANGING pt_alv_200 TYPE ty_alv_200_t.
+
+  DATA: ls_alv_200 TYPE ty_alv_200.
+
+  CLEAR: pt_alv_200.
+
+  SELECT SINGLE *
+    FROM zaos_metadata
+    INTO @DATA(ls_zaos_metadata)
+    WHERE numero_fattura = @ps_alv-belnr.
+  IF sy-subrc = 0.
+
+*    CLEAR: ls_alv_200.
+*    ls_alv_200-field = 'NUMERO_FATTURA'.
+*    ls_alv_200-label = 'Numero Documento'.
+*    ls_alv_200-value = ls_zaos_metadata-numero_fattura.
+*    APPEND ls_alv_200 TO pt_alv_200.
+*
+*    CLEAR: ls_alv_200.
+*    ls_alv_200-field = 'DATA_FATTURA'.
+*    ls_alv_200-label = 'Data Fattura'.
+*    ls_alv_200-value = ls_zaos_metadata-data_fattura.
+*    APPEND ls_alv_200 TO pt_alv_200.
+
+    CLEAR: ls_alv_200.
+    ls_alv_200-field = 'SEZIONALE_IVA'.
+    ls_alv_200-label = 'Sezionale IVA'.
+    ls_alv_200-value = ls_zaos_metadata-sezionale_iva.
+    APPEND ls_alv_200 TO pt_alv_200.
+
+    CLEAR: ls_alv_200.
+    ls_alv_200-field = 'ANNO_IVA'.
+    ls_alv_200-label = 'Anno IVA'.
+    ls_alv_200-value = ls_zaos_metadata-anno_iva.
+    APPEND ls_alv_200 TO pt_alv_200.
+
+    CLEAR: ls_alv_200.
+    ls_alv_200-field = 'OGGETTO'.
+    ls_alv_200-label = 'Oggetto'.
+    ls_alv_200-value = ls_zaos_metadata-oggetto.
+    APPEND ls_alv_200 TO pt_alv_200.
+
+
+    IF ps_alv-target = 'C' OR ps_alv-zarchiving_doctype = 'V_NUMBER'.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_NOME'.
+      ls_alv_200-label = 'Nome Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_nome.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_COGNOME'.
+      ls_alv_200-label = 'Cognome Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_cognome.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_CODFISC'.
+      ls_alv_200-label = 'Codice Fiscale Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_codfisc.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_RAGSOC'.
+      ls_alv_200-label = 'Ragione Sociale Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_ragsoc.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_PIVA'.
+      ls_alv_200-label = 'Partita IVA Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_piva.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_IPA'.
+      ls_alv_200-label = 'Codice IPA Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_ipa.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'DESTINATARIO_CODUFF'.
+      ls_alv_200-label = 'Codice Univoco Ufficio PA Destinatario'.
+      ls_alv_200-value = ls_zaos_metadata-destinatario_coduff.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+    ELSEIF ps_alv-target = 'V'.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_NOME'.
+      ls_alv_200-label = 'Nome Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_nome.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_COGNOME'.
+      ls_alv_200-label = 'Cognome Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_cognome.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_CODFISC'.
+      ls_alv_200-label = 'Codice Fiscale Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_codfisc.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_RAGSOC'.
+      ls_alv_200-label = 'Ragione Sociale Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_ragsoc.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_PIVA'.
+      ls_alv_200-label = 'Partita IVA Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_piva.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_IPA'.
+      ls_alv_200-label = 'Codice IPA Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_ipa.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+      CLEAR: ls_alv_200.
+      ls_alv_200-field = 'MITTENTE_CODUFF'.
+      ls_alv_200-label = 'Codice Univoco Ufficio PA Mittente'.
+      ls_alv_200-value = ls_zaos_metadata-mittente_coduff.
+      APPEND ls_alv_200 TO pt_alv_200.
+
+    ENDIF.
+  ENDIF.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECT_DATA_AND_INIT_STYLE_200
+*&---------------------------------------------------------------------*
+FORM select_data_and_init_style_200 .
+
+*  DATA: lt_celltab TYPE lvc_t_styl.
+*
+*  CLEAR: lt_celltab.
+*
+*  LOOP AT gt_alv_200 ASSIGNING FIELD-SYMBOL(<fs_alv_200>).
+*    IF <fs_alv_200> IS ASSIGNED.
+*      CLEAR: <fs_alv_200>-celltab.
+*
+*      PERFORM fill_celltab_200 USING <fs_alv_200>
+*                            CHANGING lt_celltab.
+*      APPEND LINES OF lt_celltab TO <fs_alv_200>-celltab.
+*
+*    ENDIF.
+*  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  FILL_CELLTAB_200
+*&---------------------------------------------------------------------*
+FORM fill_celltab_200 USING ps_alv_200 TYPE ty_alv_200
+                   CHANGING pt_celltab TYPE lvc_t_styl.
+
+  DATA: ls_celltab TYPE lvc_s_styl.
+
+  IF   ps_alv_200-field = 'NUMERO_FATTURA'
+    OR ps_alv_200-field = 'DATA_FATTURA'
+    OR ps_alv_200-field = 'SEZIONALE_IVA'
+    OR ps_alv_200-field = 'ANNO_IVA'.
+
+    ls_celltab-fieldname = 'FIELD'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+    ls_celltab-fieldname = 'LABEL'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+    ls_celltab-fieldname = 'VALUE'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+
+  ELSE.
+
+    ls_celltab-fieldname = 'FIELD'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+    ls_celltab-fieldname = 'LABEL'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_disabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+    ls_celltab-fieldname = 'VALUE'.
+    ls_celltab-style = cl_gui_alv_grid=>mc_style_enabled.
+    INSERT ls_celltab INTO TABLE pt_celltab.
+
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0300  OUTPUT
+*&---------------------------------------------------------------------*
+MODULE status_0300 OUTPUT.
+
+  SET PF-STATUS 'MAIN300'.
+  SET TITLEBAR 'MAIN300'.
+
+  DATA: lv_container_300          TYPE scrfname VALUE 'CONTAINER_300',
+        lv_custom_container_300   TYPE REF TO cl_gui_docking_container,
+        lv_ratio_300              TYPE i,
+        lo_client_information_300 TYPE REF TO if_wd_client_information,
+        ls_layout_300             TYPE lvc_s_layo,
+        ls_variant_300            TYPE disvariant,
+        lv_x_300                  TYPE char1 VALUE 'X'.
+
+  "FREE lv_custom_container_300.
+
+  IF lv_custom_container_300 IS INITIAL.
+
+    lv_ratio_300 = 95.
+
+    CREATE OBJECT lv_custom_container_300
+      EXPORTING
+        side                        = cl_gui_docking_container=>dock_at_left
+        extension                   = 99999
+        ratio                       = lv_ratio_300
+        caption                     = 'Cockpit AOS - Registri'
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+
+    CREATE OBJECT go_dyndoc_id_300
+      EXPORTING
+        style = 'ALV_GRID'.
+
+    CREATE OBJECT go_splitter
+      EXPORTING
+        parent  = lv_custom_container_300
+        rows    = 2
+        columns = 1.
+
+    CALL METHOD go_splitter->get_container
+      EXPORTING
+        row       = 1
+        column    = 1
+      RECEIVING
+        container = go_parent_html_300.
+
+    CALL METHOD go_splitter->get_container
+      EXPORTING
+        row       = 2
+        column    = 1
+      RECEIVING
+        container = go_parent_grid_300.
+
+    CALL METHOD go_splitter->set_row_height
+      EXPORTING
+        id     = 1
+        height = 10.
+
+    CREATE OBJECT go_grid_300
+      EXPORTING
+        i_parent = go_parent_grid_300.
+
+    CREATE OBJECT go_handler.
+*    SET HANDLER go_handler->hotspot_click FOR go_grid_300.
+    SET HANDLER go_handler->top_of_page_300   FOR go_grid_300.
+
+    PERFORM select_data_and_init_style_300.
+
+    ls_layout_300-stylefname = 'CELLTAB'.
+    ls_layout_300-sel_mode   = 'D'.
+
+    ls_variant_300-report       = sy-repid && '2'.
+    ls_variant_300-username     = sy-uname.
+    ls_variant_300-variant      = '/REGISTRI'.
+
+    CALL METHOD go_grid_300->set_table_for_first_display
+      EXPORTING
+        i_structure_name              = 'ZAOS_REGISTRI'
+        is_layout                     = ls_layout_300
+        is_variant                    = ls_variant_300
+        i_save                        = 'A'
+      CHANGING
+        it_outtab                     = gt_alv_300
+        it_fieldcatalog               = gt_fcat_300
+      EXCEPTIONS
+        invalid_parameter_combination = 1
+        program_error                 = 2
+        too_many_lines                = 3
+        OTHERS                        = 4.
+
+    IF go_dyndoc_id IS INITIAL.
+      CREATE OBJECT go_dyndoc_id
+        EXPORTING
+          style = 'ALV_GRID'.
+    ENDIF.
+
+    CALL METHOD go_dyndoc_id->initialize_document.
+
+    CALL METHOD go_grid_300->list_processing_events
+      EXPORTING
+        i_event_name = 'TOP_OF_PAGE'
+        i_dyndoc_id  = go_dyndoc_id.
+
+    CALL METHOD go_grid_300->set_ready_for_input
+      EXPORTING
+        i_ready_for_input = 0.
+
+  ENDIF.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+MODULE user_command_0300 INPUT.
+
+  DATA: save_ok_300 TYPE sy-ucomm.
+
+  save_ok_300 = ok_code.
+  CLEAR ok_code.
+
+  CASE save_ok_300.
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN 'EXIT'.
+      LEAVE PROGRAM.
+    WHEN 'UPLOAD_S'.
+      PERFORM upload_from_spool.
+    WHEN 'ALLOW'.
+      PERFORM allow_documents_300.
+    WHEN 'REVOKE'.
+      PERFORM revoke_documents_300.
+    WHEN 'MANUAL'.
+      PERFORM confirm_manual_upload_300 .
+  ENDCASE.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECT_DATA_AND_INIT_STYLE_300
+*&---------------------------------------------------------------------*
+FORM select_data_and_init_style_300 .
+
+  DATA: lv_lines TYPE i.
+
+  CLEAR: lv_lines,
+         gt_fcat_300.
+
+  PERFORM refresh_icons.
+  PERFORM refresh_icons_300.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name       = 'ZAOS_REGISTRI'
+    CHANGING
+      ct_fieldcat            = gt_fcat_300
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+
+  DESCRIBE TABLE gt_fcat_300 LINES lv_lines.
+
+  CLEAR gs_fcat.
+  gs_fcat-reptext = gs_fcat-scrtext_s = gs_fcat-scrtext_m = gs_fcat-scrtext_l = 'Error'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_s WHERE fieldname EQ 'ICON_ERRORS'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_m WHERE fieldname EQ 'ICON_ERRORS'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_l WHERE fieldname EQ 'ICON_ERRORS'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING reptext   WHERE fieldname EQ 'ICON_ERRORS'.
+
+  CLEAR gs_fcat.
+  gs_fcat-reptext = gs_fcat-scrtext_s = gs_fcat-scrtext_m = gs_fcat-scrtext_l = 'Archived'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_s WHERE fieldname EQ 'ICON_CONSERVATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_m WHERE fieldname EQ 'ICON_CONSERVATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_l WHERE fieldname EQ 'ICON_CONSERVATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING reptext   WHERE fieldname EQ 'ICON_CONSERVATO'.
+
+  CLEAR gs_fcat.
+  gs_fcat-reptext = gs_fcat-scrtext_s = gs_fcat-scrtext_m = gs_fcat-scrtext_l = 'Ready'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_s WHERE fieldname EQ 'ICON_ALLOWED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_m WHERE fieldname EQ 'ICON_ALLOWED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_l WHERE fieldname EQ 'ICON_ALLOWED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING reptext   WHERE fieldname EQ 'ICON_ALLOWED'.
+
+  CLEAR gs_fcat.
+  gs_fcat-reptext = gs_fcat-scrtext_s = gs_fcat-scrtext_m = gs_fcat-scrtext_l = 'Locked'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_s WHERE fieldname EQ 'ICON_LOCKED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_m WHERE fieldname EQ 'ICON_LOCKED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_l WHERE fieldname EQ 'ICON_LOCKED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING reptext   WHERE fieldname EQ 'ICON_LOCKED'.
+
+  CLEAR gs_fcat.
+  gs_fcat-reptext = gs_fcat-scrtext_s = gs_fcat-scrtext_m = gs_fcat-scrtext_l = 'Sent'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_s WHERE fieldname EQ 'ICON_INVIATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_m WHERE fieldname EQ 'ICON_INVIATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING scrtext_l WHERE fieldname EQ 'ICON_INVIATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING reptext   WHERE fieldname EQ 'ICON_INVIATO'.
+
+  CLEAR gs_fcat.
+  gs_fcat-no_out = abap_true.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'CONSERVATO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ALLOWED'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'ERROR'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'CHANGE_LOCK'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'INV_CONSERVAZIONE'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'FULL_FILENAME'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'COUNTER'.
+  "MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'PACCHETTO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'MTIM'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'SHA256'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'IDENTIFICATIVO_VERSAMENTO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'IDENTIFICATIVO_CLASSE'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'IDENTIFICATIVO_UO'.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING no_out WHERE fieldname EQ 'IDENTIFICATIVO_AAO'.
+
+  CLEAR gs_fcat.
+  gs_fcat-col_pos = 7.
+  MODIFY gt_fcat_300 FROM gs_fcat TRANSPORTING col_pos WHERE fieldname EQ 'PACCHETTO'.
+
+ENDFORM.
